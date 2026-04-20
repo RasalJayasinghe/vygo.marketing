@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import { useMarketingData, filterData, useFilterState } from './hooks/useMarketingData.js'
-import SideRail from './components/SideRail.jsx'
 import TopBar from './components/TopBar.jsx'
 import Overview from './tabs/Overview.jsx'
 import SocialPosts from './tabs/SocialPosts.jsx'
@@ -34,90 +33,51 @@ export default function App() {
   const tabs = TAB_DEFS.map(t => ({ ...t, count: counts[t.id] }))
 
   return (
-    <div className="relative min-h-screen flex">
-      <SideRail tabs={tabs} current={tab} onChange={setTab} />
+    <div className="relative min-h-screen flex flex-col">
+      <TopBar
+        years={years}
+        months={months}
+        year={year}
+        month={month}
+        onYear={setYear}
+        onMonth={setMonth}
+        recordCount={filtered.length}
+        lastUpdated={lastUpdated}
+        loading={loading && data.length === 0}
+        tabs={tabs}
+        currentTab={tab}
+        onTabChange={setTab}
+      />
 
-      <div className="flex-1 min-w-0 flex flex-col">
-        <TopBar
-          years={years}
-          months={months}
-          year={year}
-          month={month}
-          onYear={setYear}
-          onMonth={setMonth}
-          recordCount={filtered.length}
-          lastUpdated={lastUpdated}
-          loading={loading && data.length === 0}
-        />
-
-        <main className="relative z-10 flex-1 px-6 lg:px-10 pt-6 pb-10 max-w-[1400px] w-full mx-auto">
-          <MobileTabs tabs={tabs} current={tab} onChange={setTab} />
-
-          {error && (
-            <div
-              className="card p-4 mb-6"
-              style={{ borderColor: 'rgba(216, 90, 46, 0.4)', background: '#fbf3ed' }}
-            >
-              <p className="kicker" style={{ color: 'var(--color-coral-500)' }}>Connection error</p>
-              <p className="mt-1 text-sm text-[color:var(--color-ink)]">{error}</p>
-              <p className="mt-1 text-xs text-[color:var(--color-ink-mute)]">
-                Make sure the Google Sheet is published publicly (File → Share → Publish to web → CSV).
-              </p>
-            </div>
-          )}
-
-          {loading && data.length === 0 && <LoadingState />}
-
-          {data.length > 0 && (
-            <>
-              {tab === 'overview' && <Overview data={filtered} />}
-              {tab === 'social'   && <SocialPosts data={filtered} />}
-              {tab === 'edm'      && <EDMs data={filtered} />}
-              {tab === 'webinar'  && <Webinars data={filtered} />}
-            </>
-          )}
-        </main>
-
-        <footer className="relative z-10 px-6 lg:px-10 py-5 border-t border-[color:var(--color-rule)] flex flex-wrap gap-2 justify-between text-[10px] uppercase tracking-[0.18em] text-[color:var(--color-ink-mute)]">
-          <span>Vygometrics · Marketing Journal</span>
-          <span className="tabular-nums">Live · Auto-refresh 60s</span>
-        </footer>
-      </div>
-    </div>
-  )
-}
-
-function MobileTabs({ tabs, current, onChange }) {
-  return (
-    <div className="lg:hidden flex gap-6 mb-6 overflow-x-auto scroll-slim -mx-1 px-1 pb-3 border-b border-[color:var(--color-rule)]">
-      {tabs.map((t, i) => {
-        const isActive = current === t.id
-        return (
-          <button
-            key={t.id}
-            onClick={() => onChange(t.id)}
-            className="shrink-0 flex items-baseline gap-2 pb-2 relative"
+      <main className="relative z-10 flex-1 w-full max-w-[min(100%,1600px)] mx-auto px-4 sm:px-6 lg:px-10 pt-6 pb-10">
+        {error && (
+          <div
+            className="card p-4 mb-6"
+            style={{ borderColor: 'rgba(216, 90, 46, 0.4)', background: '#fbf3ed' }}
           >
-            <span className="section-no" style={{ fontSize: 14, color: isActive ? 'var(--color-violet-500)' : 'var(--color-ink-faint)' }}>
-              {String(i + 1).padStart(2, '0')}
-            </span>
-            <span
-              className={`text-xs tracking-wide ${
-                isActive ? 'text-[color:var(--color-ink)] font-semibold' : 'text-[color:var(--color-ink-mute)]'
-              }`}
-            >
-              {t.label}
-            </span>
-            {isActive && (
-              <span
-                aria-hidden
-                className="absolute left-0 right-0 -bottom-[1px] h-[2px]"
-                style={{ background: 'var(--color-ink)' }}
-              />
-            )}
-          </button>
-        )
-      })}
+            <p className="kicker" style={{ color: 'var(--color-coral-500)' }}>Connection error</p>
+            <p className="mt-1 text-sm text-[color:var(--color-ink)]">{error}</p>
+            <p className="mt-1 text-xs text-[color:var(--color-ink-mute)]">
+              Make sure the Google Sheet is published publicly (File → Share → Publish to web → CSV).
+            </p>
+          </div>
+        )}
+
+        {loading && data.length === 0 && <LoadingState />}
+
+        {data.length > 0 && (
+          <>
+            {tab === 'overview' && <Overview data={filtered} />}
+            {tab === 'social'   && <SocialPosts data={filtered} />}
+            {tab === 'edm'      && <EDMs data={filtered} />}
+            {tab === 'webinar'  && <Webinars data={filtered} />}
+          </>
+        )}
+      </main>
+
+      <footer className="relative z-10 px-4 sm:px-6 lg:px-10 py-3 border-t border-[color:var(--color-rule)] text-[10px] uppercase tracking-[0.14em] text-[color:var(--color-ink-mute)] text-right">
+        CSV feed · Auto-refresh 60s
+      </footer>
     </div>
   )
 }
