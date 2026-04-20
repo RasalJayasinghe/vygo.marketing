@@ -16,6 +16,7 @@ yarn-error.log*
 pnpm-debug.log*
 
 # Editor / OS
+.claude/
 .DS_Store
 *.swp
 *.swo
