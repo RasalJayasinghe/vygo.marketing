@@ -5,21 +5,32 @@ const MONTHS_ORDER = ['January','February','March','April','May','June','July','
 const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRjoTHipQXX-v17OZCOVsgJEXKrpnEVrCsalmIn72uInoJNbK_QnW2jqKZFY-16bDyr8G3ZzrXu8oSw/pub?output=csv'
 const NUMERIC_CLEANUP = /[,%\s]/g
 const AUTO_REFRESH_MS = 60_000
+const EMPTY_NUM = /^(?:-|—|–|n\/?a|null|none)?$/i
 
 function parseNum(val) {
-  if (val === undefined || val === null || val === '') return 0
-  const n = parseFloat(String(val).replace(NUMERIC_CLEANUP, ''))
+  if (val === undefined || val === null) return 0
+  const str = String(val).trim()
+  if (EMPTY_NUM.test(str)) return 0
+  const n = parseFloat(str.replace(NUMERIC_CLEANUP, ''))
   return Number.isFinite(n) ? n : 0
 }
 
 function parseOpensField(raw) {
   if (!raw) return { opens: 0, sent: 0 }
   const str = String(raw).trim()
+  if (EMPTY_NUM.test(str)) return { opens: 0, sent: 0 }
   if (str.includes('/')) {
     const [a, b] = str.split('/')
     return { opens: parseNum(a), sent: parseNum(b) }
   }
   return { opens: parseNum(str), sent: 0 }
+}
+
+function normaliseMonth(raw) {
+  const v = String(raw || '').trim()
+  if (!v) return ''
+  const match = MONTHS_ORDER.find(m => m.toLowerCase() === v.toLowerCase())
+  return match || v
 }
 
 function normaliseAssetType(raw) {
@@ -28,6 +39,7 @@ function normaliseAssetType(raw) {
   if (v.startsWith('social')) return 'Social Post'
   if (v === 'edm' || v.includes('email')) return 'EDM'
   if (v.startsWith('webinar')) return 'Webinar'
+  if (v.startsWith('podcast') || v.includes('episode')) return 'Podcast'
   return raw.trim()
 }
 
@@ -36,12 +48,11 @@ function mapRow(row) {
   Object.keys(row).forEach(k => { norm[k.trim()] = row[k] })
 
   const year = String(norm['Year'] || '').trim()
-  const month = String(norm['Month'] || '').trim()
+  const month = normaliseMonth(norm['Month'])
   const assetType = normaliseAssetType(norm['Asset Type'])
-  const assetName = String(norm['Asset Name / Topic'] || norm['Asset Name/Topic'] || norm['Asset Name'] || norm['Topic'] || '').trim()
+  const assetName = String(norm['Asset Name / Topic'] || norm['Asset Name/Topic'] || norm['Asset Name'] || norm['Topic'] || '').replace(/\u2028/g, ' ').trim()
 
-  if (!assetType && !assetName) return null
-  if (!month && !assetName) return null
+  if (!assetType || !assetName) return null
 
   const { opens: parsedOpens, sent: parsedSent } = parseOpensField(norm['Total Opens'])
   const totalDelivered = parseNum(norm['Total Delivered']) || parsedSent
@@ -58,8 +69,29 @@ function mapRow(row) {
     ctr: parseNum(norm['CTR (%)'] ?? norm['CTR']),
     registrations: parseNum(norm['Registrations']),
     attendees: parseNum(norm['Attendees']),
+    downloads: parseNum(norm['Downloads']),
+    listens: parseNum(norm['Listens'] ?? norm['Plays']),
+    avgConsumption: parseNum(norm['Avg Consumption (%)'] ?? norm['Avg Completion (%)']),
+    guestName: String(norm['Guest'] || norm['Guest Name'] || '').trim(),
     notes: String(norm['Notes'] || '').trim(),
   }
+}
+
+async function fetchSheetRows() {
+  const res = await fetch(`${CSV_URL}&cb=${Date.now()}`, {
+    cache: 'no-store',
+    headers: { Pragma: 'no-cache' },
+  })
+  if (!res.ok) throw new Error(`Master sheet fetch failed (${res.status})`)
+  const text = await res.text()
+  return new Promise((resolve, reject) => {
+    Papa.parse(text, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => resolve(results.data.map(mapRow).filter(Boolean)),
+      error: (err) => reject(err),
+    })
+  })
 }
 
 export function useMarketingData() {
@@ -72,34 +104,36 @@ export function useMarketingData() {
   useEffect(() => {
     let cancelled = false
 
-    function fetchData(showLoading = true) {
+    async function fetchData(showLoading = true) {
       if (showLoading) setLoading(true)
-      Papa.parse(`${CSV_URL}&t=${Date.now()}`, {
-        download: true,
-        header: true,
-        skipEmptyLines: true,
-        complete: (results) => {
-          if (cancelled) return
-          const parsed = results.data.map(mapRow).filter(Boolean)
-          setData(parsed)
-          setError(null)
-          setLoading(false)
-          setLastUpdated(new Date())
-        },
-        error: (err) => {
-          if (cancelled) return
-          setError(err.message || 'Failed to fetch data')
-          setLoading(false)
-        },
-      })
+      try {
+        const parsed = await fetchSheetRows()
+        if (cancelled) return
+        setData(parsed)
+        setError(null)
+        setLastUpdated(new Date())
+      } catch (err) {
+        if (cancelled) return
+        setError(err.message || 'Failed to fetch master sheet')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
     }
 
     fetchData(true)
     timerRef.current = setInterval(() => fetchData(false), AUTO_REFRESH_MS)
 
+    function onFocus() {
+      if (document.visibilityState === 'visible') fetchData(false)
+    }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
+
     return () => {
       cancelled = true
       if (timerRef.current) clearInterval(timerRef.current)
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
     }
   }, [])
 
