@@ -1,8 +1,7 @@
 // /api/generate-brief — server-side call to the Anthropic API.
 //
-// Requires ANTHROPIC_API_KEY set in Vercel → Project → Settings →
-// Environment Variables. Never call the Anthropic API directly from the
-// browser — the key would be exposed to anyone who opens dev tools.
+// Requires ANTHROPIC_API_KEY set in Netlify → Site configuration → Environment variables.
+// Never call the Anthropic API directly from the browser — the key would be exposed.
 //
 // Prompts are sourced from api/prompts/*.md (adapted from Cursor skills:
 // podcast-repurposer, vygo-webinar-campaign-builder).

@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "dev:netlify": "npx netlify dev",
     "build": "vite build",
     "preview": "vite preview"
   },

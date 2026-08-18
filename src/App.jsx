@@ -1,7 +1,7 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
 import { filterData, useFilterState } from './hooks/useMarketingData.js'
 import { useDashboardData } from './hooks/useDashboardData.js'
-import { isToolTab } from './config/navigation.js'
+import { isSystemTab, isToolTab } from './config/navigation.js'
 import AppShell from './components/AppShell.jsx'
 import { Card, CardContent } from './components/ui/card.jsx'
 
@@ -15,6 +15,7 @@ const Webinars = lazy(() => import('./tabs/Webinars.jsx'))
 const Podcasts = lazy(() => import('./tabs/Podcasts.jsx'))
 const WebinarBrief = lazy(() => import('./tools/WebinarBrief.jsx'))
 const PodcastRepurposer = lazy(() => import('./tools/PodcastRepurposer.jsx'))
+const WebinarWorkflow = lazy(() => import('./systems/WebinarWorkflow.jsx'))
 
 export default function App() {
   const [tab, setTab] = useState('overview')
@@ -22,6 +23,7 @@ export default function App() {
   const { year, month, years, months, setYear, setMonth } = useFilterState(data)
   const filtered = useMemo(() => filterData(data, year, month), [data, year, month])
   const isTool = isToolTab(tab)
+  const isSystem = isSystemTab(tab)
 
   return (
     <AppShell
@@ -36,7 +38,7 @@ export default function App() {
       lastUpdated={lastUpdated}
       loading={loading && data.length === 0}
     >
-      {!isTool && error && (
+      {!isTool && !isSystem && error && (
         <Card className="mb-5 border-[#f3c7c2]">
           <CardContent className="py-4">
             <p className="text-sm font-semibold text-destructive">Connection error</p>
@@ -44,7 +46,7 @@ export default function App() {
           </CardContent>
         </Card>
       )}
-      {!isTool && !error && warning && (
+      {!isTool && !isSystem && !error && warning && (
         <Card className="mb-5 border-[#ead9a8] bg-[#fbf6ea]">
           <CardContent className="py-4">
             <p className="text-sm font-semibold text-foreground">HubSpot connected with limited scopes</p>
@@ -53,7 +55,7 @@ export default function App() {
         </Card>
       )}
 
-      {!isTool && loading && data.length === 0 && (
+      {!isTool && !isSystem && loading && data.length === 0 && (
         <div className="grid min-h-[320px] place-items-center">
           <p className="text-sm text-muted-foreground">Syncing live data…</p>
         </div>
@@ -62,6 +64,7 @@ export default function App() {
       <Suspense fallback={<div className="py-16 text-center text-sm text-muted-foreground">Loading…</div>}>
         {isTool && tab === 'tool-webinar' && <WebinarBrief />}
         {isTool && tab === 'tool-podcast' && <PodcastRepurposer />}
+        {isSystem && tab === 'system-webinars' && <WebinarWorkflow />}
 
         {!isTool && data.length > 0 && (
           <>

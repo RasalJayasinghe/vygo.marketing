@@ -1,0 +1,105 @@
+// POST { title, date?, speaker? }
+// Creates a Zoom meeting via Server-to-Server OAuth and generates 3 guest registrant links.
+// Requires: ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET in env.
+// Returns 503 with setup instructions if credentials are missing.
+
+export default async function handler(req, res) {
+  res.setHeader('Cache-Control', 'no-store')
+  if (req.method !== 'POST') { res.setHeader('Allow', 'POST'); res.status(405).end(); return }
+
+  const { ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET } = process.env
+  if (!ZOOM_ACCOUNT_ID || !ZOOM_CLIENT_ID || !ZOOM_CLIENT_SECRET) {
+    res.status(503).json({
+      error: 'Zoom credentials not configured.',
+      setup: 'Add ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, and ZOOM_CLIENT_SECRET to your Netlify environment variables. Create a Server-to-Server OAuth app at marketplace.zoom.us with Meeting:write scope.',
+    })
+    return
+  }
+
+  const { title, date, speaker } = req.body || {}
+  if (!title) { res.status(400).json({ error: 'title is required' }); return }
+
+  // Server-to-Server OAuth token
+  let accessToken
+  try {
+    const tokenRes = await fetch(
+      `https://zoom.us/oauth/token?grant_type=account_credentials&account_id=${encodeURIComponent(ZOOM_ACCOUNT_ID)}`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${ZOOM_CLIENT_ID}:${ZOOM_CLIENT_SECRET}`).toString('base64')}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+      }
+    )
+    if (!tokenRes.ok) throw new Error(`Zoom auth failed: ${tokenRes.status}`)
+    const tokenData = await tokenRes.json()
+    accessToken = tokenData.access_token
+  } catch (err) {
+    console.error('Zoom token error', err)
+    res.status(502).json({ error: 'Could not authenticate with Zoom' }); return
+  }
+
+  // Create meeting with registration enabled
+  let meeting
+  try {
+    const meetingRes = await fetch('https://api.zoom.us/v2/users/me/meetings', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        topic: title,
+        type: 2,
+        start_time: date || undefined,
+        duration: 60,
+        settings: {
+          host_video: true,
+          participant_video: true,
+          registration_type: 1,
+          registrants_confirmation_email: true,
+          waiting_room: false,
+        },
+      }),
+    })
+    if (!meetingRes.ok) {
+      const e = await meetingRes.json()
+      throw new Error(e.message || 'Meeting creation failed')
+    }
+    meeting = await meetingRes.json()
+  } catch (err) {
+    console.error('Zoom meeting error', err)
+    res.status(502).json({ error: err.message }); return
+  }
+
+  // Generate 3 guest registrant links
+  const guestSlots = [
+    speaker || 'Guest speaker',
+    'Co-host / backup',
+    'Producer slot',
+  ]
+  const guestLinks = []
+  for (const label of guestSlots) {
+    try {
+      const regRes = await fetch(`https://api.zoom.us/v2/meetings/${meeting.id}/registrants`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          first_name: label,
+          email: `placeholder-${Date.now()}-${Math.random().toString(36).slice(2, 7)}@noreply.vygo.com`,
+        }),
+      })
+      if (regRes.ok) {
+        const reg = await regRes.json()
+        guestLinks.push({ label, url: reg.join_url })
+      }
+    } catch { /* skip failed registrant */ }
+  }
+
+  res.status(200).json({
+    meetingId: meeting.id,
+    topic: meeting.topic,
+    startTime: meeting.start_time,
+    joinUrl: meeting.join_url,
+    hostUrl: meeting.start_url,
+    guestLinks,
+  })
+}

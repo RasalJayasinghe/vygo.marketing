@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   Database, FolderOpen, HelpCircle, Home, RefreshCw, Search,
 } from 'lucide-react'
-import { DASHBOARDS, PAGE_META, TOOLS, isToolTab } from '@/config/navigation.js'
+import { DASHBOARDS, PAGE_META, SYSTEMS, TOOLS, isSystemTab, isToolTab } from '@/config/navigation.js'
 import { Button } from '@/components/ui/button.jsx'
 import { Input } from '@/components/ui/input.jsx'
 import { Select } from '@/components/ui/select.jsx'
@@ -35,7 +35,7 @@ export default function AppShell({
   const [, tick] = useState(0)
   const [query, setQuery] = useState('')
   const meta = PAGE_META[tab] || PAGE_META.overview
-  const showFilters = !isToolTab(tab)
+  const showFilters = !isToolTab(tab) && !isSystemTab(tab)
 
   useEffect(() => {
     const id = setInterval(() => tick(n => n + 1), 15_000)
@@ -47,6 +47,9 @@ export default function AppShell({
     !normalizedQuery || item.label.toLowerCase().includes(normalizedQuery)
   )
   const visibleTools = TOOLS.filter(item =>
+    !normalizedQuery || item.label.toLowerCase().includes(normalizedQuery)
+  )
+  const visibleSystems = SYSTEMS.filter(item =>
     !normalizedQuery || item.label.toLowerCase().includes(normalizedQuery)
   )
 
@@ -108,6 +111,21 @@ export default function AppShell({
               <>
                 <p className="mt-4 mb-1 px-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Tools</p>
                 {visibleTools.map(item => (
+                  <NavItem
+                    key={item.id}
+                    icon={item.icon}
+                    label={item.label}
+                    active={tab === item.id}
+                    onClick={() => onTabChange(item.id)}
+                  />
+                ))}
+              </>
+            )}
+
+            {visibleSystems.length > 0 && (
+              <>
+                <p className="mt-4 mb-1 px-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Systems</p>
+                {visibleSystems.map(item => (
                   <NavItem
                     key={item.id}
                     icon={item.icon}

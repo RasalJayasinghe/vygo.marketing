@@ -2,6 +2,10 @@ import {
   FileText, Globe, LayoutGrid, Mail, Megaphone, Mic2, Share2, Sparkles, Video,
 } from 'lucide-react'
 
+export const SYSTEMS = [
+  { id: 'system-webinars', label: 'Webinars', icon: Video },
+]
+
 export const DASHBOARDS = [
   { id: 'overview', label: 'Overview', icon: LayoutGrid },
   { id: 'social', label: 'Social Posts', icon: Share2 },
@@ -39,8 +43,18 @@ export const PAGE_META = {
     title: 'Podcast repurposer',
     description: 'Extract one sharp idea from a transcript for LinkedIn and Spotify.',
   },
+  'system-webinars': {
+    section: 'Systems',
+    crumb: 'Webinars',
+    title: 'Webinar projects',
+    description: 'Track every webinar from first meeting to go-live.',
+  },
 }
 
 export function isToolTab(tab) {
   return tab.startsWith('tool-')
+}
+
+export function isSystemTab(tab) {
+  return tab.startsWith('system-')
 }
