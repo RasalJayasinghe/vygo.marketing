@@ -4,12 +4,7 @@
 export function readAnthropicApiKey() {
   let key = String(process.env.ANTHROPIC_API_KEY || '')
   key = key.replace(/^\uFEFF/, '').trim()
-  if (
-    (key.startsWith('"') && key.endsWith('"')) ||
-    (key.startsWith("'") && key.endsWith("'"))
-  ) {
-    key = key.slice(1, -1).trim()
-  }
+  key = key.replace(/^[\s"'\u201C\u201D\u2018\u2019]+|[\s"'\u201C\u201D\u2018\u2019]+$/g, '')
   if (/^bearer\s+/i.test(key)) key = key.replace(/^bearer\s+/i, '').trim()
   return key.replace(/[\u200B-\u200D\uFEFF]/g, '')
 }
@@ -18,10 +13,7 @@ export function anthropicKeyConfigError(key) {
   if (!key) {
     return 'ANTHROPIC_API_KEY is not configured on the server.'
   }
-  if (!key.startsWith('sk-ant-')) {
-    return 'ANTHROPIC_API_KEY is set in Netlify, but the value is not an Anthropic API key. Paste a key from console.anthropic.com that starts with sk-ant-, with no quotes around it.'
-  }
-  if (key.length < 40) {
+  if (key.length < 20) {
     return 'ANTHROPIC_API_KEY looks truncated. Paste the full key from console.anthropic.com into Netlify, with no quotes.'
   }
   return null

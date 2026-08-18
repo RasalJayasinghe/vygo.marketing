@@ -443,8 +443,7 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
           assets: [
             'Title + alternatives', 'Short description', 'Landing page copy',
             'LinkedIn launch post', 'Speaker announcement post',
-            'Registration EDM', 'Reminder EDM', 'Last chance to register',
-            'Post-webinar follow-up', 'Repurposing ideas', 'Speaker Q&A',
+            'Speaker Q&A', 'Repurposing ideas',
           ],
         })
         advanceStep(text, false)
@@ -1012,7 +1011,7 @@ function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, proj
             {loading && (
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Loader2 className="size-3.5 animate-spin" />
-                {stepDef.id === 'brief' ? 'Generating brief with Claude…' :
+                {stepDef.id === 'brief' ? 'Generating brief with Claude… first lines should appear shortly.' :
                  stepDef.id === 'edm' ? 'Generating EDM variants with Claude…' :
                  stepDef.id === 'zoom' ? 'Creating Zoom webinar…' :
                  stepDef.id === 'chase' ? 'Sending Slack ping…' : 'Working…'}

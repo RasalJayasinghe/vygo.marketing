@@ -2,6 +2,17 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button.jsx'
 import { Card, CardContent } from '@/components/ui/card.jsx'
 
+function generationFailureMessage(status, raw) {
+  const text = String(raw || '')
+  if (/inactivity timeout/i.test(text) || status === 504 || status === 408) {
+    return 'Claude is still writing and the connection timed out. Click Generate again — drafts now stream so this should stay open.'
+  }
+  if (/^\s*</.test(text) || /<html/i.test(text)) {
+    return `Generation failed (${status || 'proxy error'}). Try again in a moment.`
+  }
+  return text.trim().slice(0, 240) || `Generation failed (${status})`
+}
+
 export async function callBrief(payload) {
   const res = await fetch('/api/generate-brief', {
     method: 'POST',
@@ -9,15 +20,30 @@ export async function callBrief(payload) {
     body: JSON.stringify(payload),
   })
   const raw = await res.text()
-  let body = {}
-  try {
-    body = raw ? JSON.parse(raw) : {}
-  } catch {
-    throw new Error(raw.trim().slice(0, 240) || `Generation failed (${res.status})`)
+  const contentType = res.headers.get('content-type') || ''
+
+  if (!res.ok) {
+    if (contentType.includes('application/json')) {
+      try {
+        const body = JSON.parse(raw)
+        throw new Error(body.error || body.errorMessage || 'Generation failed')
+      } catch (err) {
+        if (err instanceof SyntaxError) throw new Error(generationFailureMessage(res.status, raw))
+        throw err
+      }
+    }
+    throw new Error(generationFailureMessage(res.status, raw))
   }
-  if (!res.ok) throw new Error(body.error || body.errorMessage || 'Generation failed')
-  if (!body.text) throw new Error('Generation returned an empty draft.')
-  return body.text
+
+  if (contentType.includes('application/json')) {
+    const body = raw ? JSON.parse(raw) : {}
+    if (!body.text) throw new Error('Generation returned an empty draft.')
+    return body.text
+  }
+
+  const text = raw.replace(/^\uFEFF/, '').trim()
+  if (!text) throw new Error('Generation returned an empty draft.')
+  return text
 }
 
 export function Field({ label, children }) {
