@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   Database, FolderOpen, HelpCircle, Home, RefreshCw, Search,
 } from 'lucide-react'
-import { DASHBOARDS, PAGE_META, SYSTEMS, TOOLS, isSystemTab, isToolTab } from '@/config/navigation.js'
+import { DASHBOARDS, PAGE_META, SYSTEMS, TOOLS, WORKSPACE, isDashboardTab } from '@/config/navigation.js'
 import { Button } from '@/components/ui/button.jsx'
 import { Input } from '@/components/ui/input.jsx'
 import { Select } from '@/components/ui/select.jsx'
@@ -35,7 +35,7 @@ export default function AppShell({
   const [, tick] = useState(0)
   const [query, setQuery] = useState('')
   const meta = PAGE_META[tab] || PAGE_META.overview
-  const showFilters = !isToolTab(tab) && !isSystemTab(tab)
+  const showFilters = isDashboardTab(tab)
 
   useEffect(() => {
     const id = setInterval(() => tick(n => n + 1), 15_000)
@@ -52,26 +52,32 @@ export default function AppShell({
   const visibleSystems = SYSTEMS.filter(item =>
     !normalizedQuery || item.label.toLowerCase().includes(normalizedQuery)
   )
+  const visibleWorkspace = WORKSPACE.filter(item =>
+    !normalizedQuery || item.label.toLowerCase().includes(normalizedQuery)
+  )
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <header className="z-20 flex h-12 items-center justify-between bg-forest px-4 text-white">
+      <header className="bg-brand-gradient z-20 flex h-14 items-center justify-between px-4 text-white lg:px-6">
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="grid size-6 place-items-center rounded-sm bg-white/10 text-[11px] font-bold tracking-tight">V</span>
-            <span className="text-[15px] font-semibold tracking-tight">Vygo</span>
-          </div>
+          <img
+            src="/brand/vygo-wordmark-white.png"
+            alt="Vygo"
+            className="h-[22px] w-auto select-none"
+          />
+          <span className="h-5 w-px bg-white/30" aria-hidden="true" />
+          <span className="text-[15px] font-medium tracking-tight">Marketing Hub</span>
         </div>
         <div className="flex items-center gap-1">
-          <Button variant="ghost" size="icon" className="text-white/80 hover:bg-white/10 hover:text-white">
+          <Button variant="ghost" size="icon" className="text-white/85 hover:bg-white/15 hover:text-white">
             <Search />
           </Button>
-          <Button variant="ghost" size="icon" className="text-white/80 hover:bg-white/10 hover:text-white">
+          <Button variant="ghost" size="icon" className="text-white/85 hover:bg-white/15 hover:text-white">
             <HelpCircle />
           </Button>
           <div className="ml-1 flex items-center gap-2 pl-2">
-            <span className="grid size-7 place-items-center rounded-full bg-[#c9a36a] text-[11px] font-semibold text-forest">VM</span>
-            <span className="hidden text-[12px] sm:block">Vygo Marketing</span>
+            <span className="grid size-7 place-items-center rounded-full bg-white/20 text-[11px] font-medium text-white ring-1 ring-white/30">VM</span>
+            <span className="hidden text-[12px] text-white/90 sm:block">Vygo Marketing</span>
           </div>
         </div>
       </header>
@@ -91,6 +97,15 @@ export default function AppShell({
           </div>
           <nav className="flex-1 overflow-y-auto px-2 pb-4">
             <NavItem icon={Home} label="Home" active={tab === 'overview'} onClick={() => onTabChange('overview')} />
+            {visibleWorkspace.map(item => (
+              <NavItem
+                key={item.id}
+                icon={item.icon}
+                label={item.label}
+                active={tab === item.id}
+                onClick={() => onTabChange(item.id)}
+              />
+            ))}
 
             {visibleDashboards.length > 0 && (
               <>
@@ -150,8 +165,8 @@ export default function AppShell({
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="border-b border-border bg-white px-5 py-4 lg:px-7">
             <p className="text-[12px] text-muted-foreground">
-              Home <span className="mx-1.5 text-[#c5ccd6]">›</span>
-              {meta.section} <span className="mx-1.5 text-[#c5ccd6]">›</span>
+              Home <span className="mx-1.5 text-[#c9cdd7]">›</span>
+              {meta.section} <span className="mx-1.5 text-[#c9cdd7]">›</span>
               <span className="text-foreground">{meta.crumb}</span>
             </p>
             <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
@@ -182,14 +197,14 @@ export default function AppShell({
             )}
             <div className="mt-3 flex flex-col gap-2 md:hidden">
               <div className="flex gap-1 overflow-x-auto scroll-slim">
-                {DASHBOARDS.map(item => (
+                {[...WORKSPACE, ...DASHBOARDS].map(item => (
                   <button
                     key={item.id}
                     type="button"
                     onClick={() => onTabChange(item.id)}
                     className={cn(
                       'shrink-0 rounded-md px-2.5 py-1.5 text-[12px] font-medium',
-                      tab === item.id ? 'bg-coral-soft text-coral' : 'text-muted-foreground'
+                      tab === item.id ? 'bg-brand-soft text-brand' : 'text-muted-foreground'
                     )}
                   >
                     {item.label}
@@ -204,7 +219,7 @@ export default function AppShell({
                     onClick={() => onTabChange(item.id)}
                     className={cn(
                       'shrink-0 rounded-md px-2.5 py-1.5 text-[12px] font-medium',
-                      tab === item.id ? 'bg-coral-soft text-coral' : 'text-muted-foreground'
+                      tab === item.id ? 'bg-brand-soft text-brand' : 'text-muted-foreground'
                     )}
                   >
                     {item.label}
@@ -230,7 +245,7 @@ function NavItem({ icon: Icon, label, active, muted, onClick }) {
       onClick={onClick}
       className={cn(
         'flex w-full items-center gap-2.5 rounded-md px-2 py-[7px] text-left text-[13px]',
-        active && 'bg-coral-soft font-medium text-coral',
+        active && 'bg-brand-soft font-medium text-brand',
         !active && !muted && 'text-foreground hover:bg-muted',
         muted && 'cursor-default text-muted-foreground'
       )}

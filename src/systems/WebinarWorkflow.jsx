@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   AlertCircle, ArrowLeft, Calendar, CheckCircle, Clock,
   Loader2, Mail, MessageSquare, Mic, MicOff, Plus,
@@ -7,14 +8,17 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button.jsx'
 import { Card, CardContent } from '@/components/ui/card.jsx'
+import {
+  deleteProject as removeProject, setProjects, updateProject as updateStoreProject,
+  useProjects, withActivity,
+} from '@/lib/projectsStore.js'
+import { WEBINAR_STEPS } from '@/lib/webinarSteps.js'
 import { cn } from '@/lib/utils'
 
 // ── Step definitions ──────────────────────────────────────────────────────
 
-const STEPS = [
-  {
-    id: 'edm',
-    label: 'EDM creation',
+const STEP_DETAILS = {
+  edm: {
     integration: 'Claude AI',
     IntegrationIcon: Sparkles,
     description: 'Generate three email variants from the planning session transcript. All variants need approval before use.',
@@ -24,9 +28,7 @@ const STEPS = [
     fallbackOutput: (p) =>
       `Variant A — "The future of ${p.title}"\nVariant B — "How top universities are changing the game"\nVariant C — "Join us: a live conversation with ${p.speaker || '[Speaker]'}"\n\n→ Three full email drafts ready for review.`,
   },
-  {
-    id: 'future-campus',
-    label: 'Future Campus email to Jayson',
+  'future-campus': {
     integration: 'Gmail',
     IntegrationIcon: Mail,
     description: 'Auto-draft outbound email to Jayson at Future Campus from the EDM output. Manual approval required — no fully automated outbound.',
@@ -37,37 +39,29 @@ const STEPS = [
     fallbackOutput: (p) =>
       `To: jayson@futurecampus.com\nSubject: Webinar guest spot — ${p.title}\n\nHi Jayson,\n\nWe'd love to have you join our upcoming webinar on "${p.title}"${p.date ? ` on ${p.date}` : ''}. Given Future Campus's audience of higher-ed marketers, we think it'd be a great fit.\n\n[Speaker intro and CTA goes here]\n\n— Vygo Marketing`,
   },
-  {
-    id: 'zoom',
-    label: 'Zoom event & guest invites',
+  zoom: {
     integration: 'Zoom API',
     IntegrationIcon: Video,
-    description: 'Auto-create the Zoom event and generate three guest invite links. Invite email drafted from template — approve before sending.',
-    actionLabel: 'Create Zoom event',
+    description: 'Auto-create the Zoom webinar and generate three guest invite links. Invite email drafted from template — approve before sending.',
+    actionLabel: 'Create Zoom webinar',
     approvalLabel: 'Approve & send invites',
     needsApproval: true,
   },
-  {
-    id: 'chase',
-    label: 'Chase Joel / Lyndon',
+  chase: {
     integration: 'Slack',
     IntegrationIcon: MessageSquare,
     description: 'Send a Slack ping when workflow is blocked on their action. Pings are recorded — the cron job follows up every 3 days automatically. Joel replies "yes" to advance.',
     actionLabel: 'Send Slack ping',
     needsApproval: false,
   },
-  {
-    id: 'guest-response',
-    label: 'Guest response',
+  'guest-response': {
     integration: null,
     IntegrationIcon: null,
     description: 'Guest confirms → workflow continues. Guest declines or no reply after 7 days → workflow pauses, new guest search triggered, meeting with Joel/Lyndon booked.',
     needsApproval: false,
     isGuestStep: true,
   },
-  {
-    id: 'brief',
-    label: 'Brief & questions',
+  brief: {
     integration: 'Claude AI',
     IntegrationIcon: Sparkles,
     description: 'Generate the full campaign brief and speaker Q&A once partner and date are both confirmed. Joel adds 1:1 context before generation.',
@@ -75,7 +69,9 @@ const STEPS = [
     needsApproval: false,
     isBriefStep: true,
   },
-]
+}
+
+const STEPS = WEBINAR_STEPS.map(step => ({ ...step, ...STEP_DETAILS[step.id] }))
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -100,6 +96,7 @@ function makeProject({ title, speaker, date, notes, transcript }) {
   steps[0].status = 'in_progress'
   return {
     id: Date.now().toString(),
+    kind: 'webinar',
     title: title || 'Untitled webinar',
     speaker, date, notes, transcript,
     joelContext: '',
@@ -125,11 +122,9 @@ const EMPTY_FORM = { title: '', speaker: '', date: '', notes: '' }
 
 // ── Main component ─────────────────────────────────────────────────────────
 
-export default function WebinarWorkflow() {
-  const [projects, setProjects] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('vygo-webinar-projects') || '[]') } catch { return [] }
-  })
-  const [selectedId, setSelectedId] = useState(null)
+export default function WebinarWorkflow({ initialProjectId = null, onConsumeInitialProject }) {
+  const projects = useProjects()
+  const [selectedId, setSelectedId] = useState(initialProjectId)
   const [showNew, setShowNew] = useState(false)
   const [newStep, setNewStep] = useState('drop')
   const [dragging, setDragging] = useState(false)
@@ -145,13 +140,27 @@ export default function WebinarWorkflow() {
   const fileInputRef = useRef(null)
 
   useEffect(() => {
-    localStorage.setItem('vygo-webinar-projects', JSON.stringify(projects))
-  }, [projects])
+    if (!initialProjectId) return
+    setSelectedId(initialProjectId)
+    onConsumeInitialProject?.()
+  }, [initialProjectId, onConsumeInitialProject])
+
+  useEffect(() => {
+    if (!showNew) return
+    const onKey = (e) => { if (e.key === 'Escape') resetNew() }
+    window.addEventListener('keydown', onKey)
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prev
+    }
+  }, [showNew])
 
   const selectedProject = projects.find(p => p.id === selectedId) ?? null
 
   const updateProject = useCallback((id, fn) => {
-    setProjects(prev => prev.map(p => p.id === id ? fn(p) : p))
+    updateStoreProject(id, fn)
   }, [])
 
   // ── Transcript processing ──
@@ -242,7 +251,10 @@ export default function WebinarWorkflow() {
         const steps = p.steps.map(s => ({ ...s }))
         steps[stepIdx] = { status: waitApproval ? 'waiting_approval' : 'completed', output }
         if (!waitApproval && stepIdx + 1 < steps.length) steps[stepIdx + 1].status = 'in_progress'
-        return { ...p, steps }
+        const message = waitApproval
+          ? `${stepDef.label} is ready for approval`
+          : `${stepDef.label} completed`
+        return withActivity({ ...p, steps }, message, waitApproval ? 'approval' : 'step')
       })
     }
 
@@ -258,13 +270,13 @@ export default function WebinarWorkflow() {
         const data = await res.json()
         if (res.status === 503) {
           // Graceful degradation — Zoom not configured
-          const placeholder = `Event: ${project.title}\nDate: ${project.date || 'TBC — confirm date before creating event'}\nHost link:  zoom.us/j/9xx-xxx-xxx?role=host\nGuest link 1: zoom.us/j/9xx-xxx-xxx?tk=guest1\nGuest link 2: zoom.us/j/9xx-xxx-xxx?tk=guest2\nGuest link 3: zoom.us/j/9xx-xxx-xxx?tk=guest3\n\n⚠ Zoom API not configured — placeholder links shown.\n${data.setup}`
+          const placeholder = `Webinar: ${project.title}\nDate: ${project.date || 'TBC — confirm date before creating webinar'}\nHost link:  zoom.us/w/9xx-xxx-xxx?role=host\nGuest link 1: zoom.us/w/9xx-xxx-xxx?tk=guest1\nGuest link 2: zoom.us/w/9xx-xxx-xxx?tk=guest2\nGuest link 3: zoom.us/w/9xx-xxx-xxx?tk=guest3\n\n⚠ Zoom API not configured — placeholder links shown.\n${data.setup}`
           advanceStep(placeholder, true)
         } else if (!res.ok) {
           throw new Error(data.error || 'Zoom API error')
         } else {
           const output = [
-            `Event: ${data.topic}`,
+            `Webinar: ${data.topic}`,
             `Date: ${data.startTime || project.date || 'TBC'}`,
             `Host link: ${data.hostUrl}`,
             ...data.guestLinks.map((g, i) => `Guest link ${i + 1} (${g.label}): ${g.url}`),
@@ -333,6 +345,14 @@ export default function WebinarWorkflow() {
     }
 
     // Synchronous state transitions
+    const ACTIVITY_BY_ACTION = {
+      approve: [`${stepDef.label} approved`, 'step'],
+      revise: [`${stepDef.label} sent back for revision`, 'note'],
+      guest_confirmed: ['Guest confirmed', 'step'],
+      guest_declined: ['Guest declined — workflow paused', 'blocked'],
+      restart_guest: ['Restarted from the chase step with a new guest', 'note'],
+    }
+
     updateProject(projectId, p => {
       const steps = p.steps.map(s => ({ ...s }))
       if (action === 'approve') {
@@ -349,7 +369,8 @@ export default function WebinarWorkflow() {
         steps[3] = { status: 'in_progress', output: null }
         steps[4] = { status: 'pending', output: null }
       }
-      return { ...p, steps }
+      const entry = ACTIVITY_BY_ACTION[action]
+      return entry ? withActivity({ ...p, steps }, entry[0], entry[1]) : { ...p, steps }
     })
   }, [projects, updateProject])
 
@@ -358,7 +379,7 @@ export default function WebinarWorkflow() {
   }, [updateProject])
 
   const deleteProject = useCallback((id) => {
-    setProjects(prev => prev.filter(p => p.id !== id))
+    removeProject(id)
     if (selectedId === id) setSelectedId(null)
   }, [selectedId])
 
@@ -379,28 +400,122 @@ export default function WebinarWorkflow() {
   }
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-5xl">
+      {/* ── Workflow strip ── */}
+      <div className="mb-6 grid grid-cols-6 gap-2">
+        {STEPS.map((s, i) => (
+          <div key={s.id} className="flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs text-muted-foreground">
+            <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-bold text-foreground">{i + 1}</span>
+            <span className="truncate">{s.short}</span>
+          </div>
+        ))}
+      </div>
+
       <div className="mb-5 flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
           {projects.length === 0 ? 'No webinars yet.' : `${projects.length} webinar${projects.length !== 1 ? 's' : ''}`}
         </p>
-        {!showNew && (
-          <Button onClick={() => setShowNew(true)} size="sm">
-            <Plus className="mr-1.5 size-3.5" /> New webinar
-          </Button>
-        )}
+        <Button onClick={() => setShowNew(true)} size="sm">
+          <Plus className="mr-1.5 size-3.5" /> New webinar
+        </Button>
       </div>
 
-      {/* ── New webinar panel ── */}
-      {showNew && (
-        <Card className="mb-6 border-[#c8dfc8]">
-          <CardContent className="pt-5">
-            <div className="mb-4 flex items-center justify-between">
-              <p className="text-sm font-semibold">New webinar</p>
-              <button type="button" onClick={resetNew} className="rounded p-0.5 text-muted-foreground hover:text-foreground">
-                <X className="size-4" />
-              </button>
+          {/* ── Empty state ── */}
+          {projects.length === 0 && !showNew && (
+            <div className="rounded-xl border border-border bg-white px-8 py-12 text-center">
+              <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-[#eff5ff]">
+                <Video className="size-5 text-brand" />
+              </div>
+              <p className="text-sm font-semibold">No webinars in progress</p>
+              <p className="mt-1 text-xs text-muted-foreground max-w-xs mx-auto">
+                Drop a Joel/Lyndon meeting transcript to kick off the 6-step workflow — from EDMs to briefing.
+              </p>
+              <Button className="mt-5" size="sm" onClick={() => setShowNew(true)}>
+                <Plus className="mr-1.5 size-3.5" /> Start from transcript
+              </Button>
             </div>
+          )}
+
+          <div className="space-y-2.5">
+            {projects.map(project => {
+              const status = overallStatus(project)
+              const activeIdx = getActiveStepIdx(project)
+              const completedCount = project.steps.filter(s => s.status === 'completed').length
+              const activeStep = activeIdx >= 0 ? STEPS[activeIdx] : null
+              return (
+                <Card
+                  key={project.id}
+                  className="group cursor-pointer transition-shadow hover:shadow-sm"
+                  onClick={() => setSelectedId(project.id)}
+                >
+                  <CardContent className="py-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="truncate text-sm font-semibold">{project.title}</p>
+                          <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium', status.color)}>
+                            {status.label}
+                          </span>
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap gap-4 text-xs text-muted-foreground">
+                          {project.speaker && <span className="flex items-center gap-1"><User className="size-3" />{project.speaker}</span>}
+                          <span className="flex items-center gap-1">
+                            <Calendar className="size-3" />
+                            {project.date || <span className="text-amber-600">Date TBC</span>}
+                          </span>
+                          {activeStep && (
+                            <span className="flex items-center gap-1">
+                              <Clock className="size-3" />{activeStep.label}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-3 flex items-center gap-1">
+                          {STEPS.map((s, i) => {
+                            const st = project.steps[i].status
+                            return (
+                              <div key={s.id} title={`Step ${i + 1}: ${s.label}`} className={cn(
+                                'h-1.5 flex-1 rounded-full transition-colors',
+                                st === 'completed' && 'bg-green-400',
+                                st === 'waiting_approval' && 'bg-amber-400',
+                                st === 'in_progress' && 'bg-brand',
+                                st === 'blocked' && 'bg-red-400',
+                                st === 'pending' && 'bg-border',
+                              )} />
+                            )
+                          })}
+                          <span className="ml-2 text-[10px] text-muted-foreground">{completedCount}/{STEPS.length}</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={e => { e.stopPropagation(); deleteProject(project.id) }}
+                        className="mt-0.5 shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+            })}
+          </div>
+
+      {showNew && createPortal(
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 sm:p-8" role="dialog" aria-modal="true" aria-labelledby="new-webinar-title">
+          <button type="button" className="absolute inset-0 bg-[#0b1020]/55 backdrop-blur-[3px]" onClick={resetNew} aria-label="Close new webinar" />
+          <Card className="relative z-10 flex max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden border-[#c7dcff] shadow-2xl sm:max-h-[calc(100vh-4rem)]">
+            <CardContent className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-6 sm:px-8 sm:py-7">
+              <div className="mb-5 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <p id="new-webinar-title" className="text-base font-semibold">New webinar</p>
+                  <span className="rounded-full bg-[#eff5ff] px-2.5 py-0.5 text-[11px] font-medium text-brand">
+                    {newStep === 'drop' ? 'Step 1 of 2' : 'Step 2 of 2'}
+                  </span>
+                </div>
+                <button type="button" onClick={resetNew} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground">
+                  <X className="size-4" />
+                </button>
+              </div>
 
             {newStep === 'drop' && (
               <div className="space-y-3">
@@ -410,21 +525,32 @@ export default function WebinarWorkflow() {
                   onDrop={handleDrop}
                   onClick={() => fileInputRef.current?.click()}
                   className={cn(
-                    'flex min-h-[148px] cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed transition-colors',
-                    dragging ? 'border-forest bg-[#f0f6f0]' : 'border-border hover:border-muted-foreground/40 hover:bg-muted/20'
+                    'flex min-h-[240px] cursor-pointer flex-col items-center justify-center gap-4 rounded-xl border-2 border-dashed px-6 transition-all sm:min-h-[300px]',
+                    dragging
+                      ? 'border-brand bg-[#eff5ff] shadow-inner'
+                      : 'border-[#c7dcff] bg-[#f8fbff] hover:border-brand/60 hover:bg-[#e8f1ff]'
                   )}
                 >
-                  <Upload className="size-7 text-muted-foreground" />
+                  <div className={cn(
+                    'flex size-12 items-center justify-center rounded-full transition-colors',
+                    dragging ? 'bg-brand/15' : 'bg-[#dbe8ff]'
+                  )}>
+                    <Upload className="size-5 text-brand" />
+                  </div>
                   <div className="text-center">
-                    <p className="text-sm font-medium">Drop your meeting transcript here</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">Joel/Lyndon meeting notes · .txt or .md · AI will parse it</p>
+                    <p className="text-sm font-semibold text-foreground">Drop your Joel/Lyndon meeting transcript</p>
+                    <p className="mt-1 text-xs text-muted-foreground">.txt or .md · Claude will extract topic, speaker, and date</p>
+                    <p className="mt-2.5 text-[11px] text-muted-foreground/70">→ Starts the 6-step webinar workflow automatically</p>
                   </div>
                   <input ref={fileInputRef} type="file" accept=".txt,.md" className="hidden" onChange={handleFileChange} />
                 </div>
-                <p className="text-xs text-muted-foreground">Or paste transcript text:</p>
+                <div className="relative">
+                  <div className="absolute inset-x-0 top-1/2 h-px bg-border" />
+                  <span className="relative mx-auto flex w-fit bg-white px-3 text-[11px] text-muted-foreground">or paste transcript text</span>
+                </div>
                 <textarea
-                  className="w-full rounded-md border border-border bg-muted/30 px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-forest"
-                  rows={4}
+                  className="w-full rounded-md border border-border bg-muted/30 px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-brand"
+                  rows={8}
                   placeholder="Paste meeting notes here…"
                   onBlur={e => { if (e.target.value.trim().length > 30) processTranscript(e.target.value) }}
                 />
@@ -457,7 +583,7 @@ export default function WebinarWorkflow() {
                   <label className="block">
                     <span className="mb-1 block text-xs font-medium text-muted-foreground">Webinar title</span>
                     <input
-                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-forest"
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand"
                       value={form.title}
                       onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
                       placeholder="e.g. How to scale student success"
@@ -466,7 +592,7 @@ export default function WebinarWorkflow() {
                   <label className="block">
                     <span className="mb-1 block text-xs font-medium text-muted-foreground">Speaker(s)</span>
                     <input
-                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-forest"
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand"
                       value={form.speaker}
                       onChange={e => setForm(f => ({ ...f, speaker: e.target.value }))}
                       placeholder="e.g. Joel Smith"
@@ -490,7 +616,7 @@ export default function WebinarWorkflow() {
                   </div>
                   <input
                     className={cn(
-                      'w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-forest',
+                      'w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand',
                       listening ? 'border-red-300 bg-red-50/40' : 'border-border bg-background'
                     )}
                     value={form.date}
@@ -510,7 +636,7 @@ export default function WebinarWorkflow() {
                 <label className="block">
                   <span className="mb-1 block text-xs font-medium text-muted-foreground">Additional notes</span>
                   <textarea
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-forest"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand"
                     rows={2}
                     value={form.notes}
                     onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
@@ -526,67 +652,11 @@ export default function WebinarWorkflow() {
                 </div>
               </div>
             )}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </div>,
+        document.body
       )}
-
-      {/* ── Project list ── */}
-      {projects.length === 0 && !showNew && (
-        <div className="flex min-h-[220px] flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed border-border text-center">
-          <Video className="size-7 text-muted-foreground" />
-          <div>
-            <p className="text-sm font-medium">No webinar projects yet</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">Click "New webinar" and drop a meeting transcript to start the 6-step workflow</p>
-          </div>
-        </div>
-      )}
-
-      <div className="space-y-2.5">
-        {projects.map(project => {
-          const status = overallStatus(project)
-          const activeIdx = getActiveStepIdx(project)
-          const activeStep = activeIdx >= 0 ? STEPS[activeIdx] : null
-          return (
-            <Card
-              key={project.id}
-              className="group cursor-pointer transition-shadow hover:shadow-sm"
-              onClick={() => setSelectedId(project.id)}
-            >
-              <CardContent className="py-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="truncate text-sm font-semibold">{project.title}</p>
-                      <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium', status.color)}>
-                        {status.label}
-                      </span>
-                    </div>
-                    <div className="mt-1.5 flex flex-wrap gap-4 text-xs text-muted-foreground">
-                      {project.speaker && <span className="flex items-center gap-1"><User className="size-3" />{project.speaker}</span>}
-                      <span className="flex items-center gap-1">
-                        <Calendar className="size-3" />
-                        {project.date || <span className="text-amber-600">Date TBC</span>}
-                      </span>
-                      {activeStep && (
-                        <span className="flex items-center gap-1">
-                          <Clock className="size-3" />{activeStep.label}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={e => { e.stopPropagation(); deleteProject(project.id) }}
-                    className="mt-0.5 shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
-                  >
-                    <X className="size-3.5" />
-                  </button>
-                </div>
-              </CardContent>
-            </Card>
-          )
-        })}
-      </div>
     </div>
   )
 }
@@ -598,7 +668,7 @@ function PipelineView({ project, onBack, onStepAction, onDelete, onUpdateDate, o
   const activeIdx = getActiveStepIdx(project)
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-3xl">
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <button
@@ -683,7 +753,7 @@ function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, proj
         'relative z-10 flex size-[30px] shrink-0 items-center justify-center rounded-full border-2 text-[11px] font-bold',
         isPast && 'border-green-500 bg-green-500 text-white',
         isBlocked && 'border-red-400 bg-red-50 text-red-500',
-        isActive && !isBlocked && 'border-forest bg-white text-forest',
+        isActive && !isBlocked && 'border-brand bg-white text-brand',
         !isActive && !isPast && !isBlocked && 'border-border bg-background text-muted-foreground'
       )}>
         {isPast ? <CheckCircle className="size-4" /> : isBlocked ? <X className="size-3.5" /> : <span>{index + 1}</span>}
@@ -723,7 +793,7 @@ function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, proj
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-muted-foreground">Joel's 1:1 context <span className="font-normal">(optional — add anything not in the transcript)</span></span>
               <textarea
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-forest"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand"
                 rows={3}
                 value={joelContext || ''}
                 onChange={e => onJoelContextChange?.(e.target.value)}
@@ -769,7 +839,7 @@ function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, proj
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Loader2 className="size-3.5 animate-spin" />
                 {stepDef.id === 'brief' ? 'Generating brief with Claude…' :
-                 stepDef.id === 'zoom' ? 'Creating Zoom event…' :
+                 stepDef.id === 'zoom' ? 'Creating Zoom webinar…' :
                  stepDef.id === 'chase' ? 'Sending Slack ping…' : 'Working…'}
               </div>
             )}

@@ -1,6 +1,10 @@
 import {
-  FileText, Globe, LayoutGrid, Mail, Megaphone, Mic2, Share2, Sparkles, Video,
+  FileText, FolderKanban, Globe, LayoutGrid, Mail, Megaphone, Mic2, Share2, Sparkles, Video,
 } from 'lucide-react'
+
+export const WORKSPACE = [
+  { id: 'projects', label: 'Projects', icon: FolderKanban },
+]
 
 export const SYSTEMS = [
   { id: 'system-webinars', label: 'Webinars', icon: Video },
@@ -23,6 +27,12 @@ export const TOOLS = [
 ]
 
 export const PAGE_META = {
+  projects: {
+    section: 'Workspace',
+    crumb: 'Projects',
+    title: 'Projects',
+    description: 'Every webinar and campaign in one place — to-do lists, progress, and what happened when.',
+  },
   overview: { section: 'Dashboards', crumb: 'Performance Marketing overview', title: 'Performance Marketing overview' },
   social: { section: 'Dashboards', crumb: 'Social Posts', title: 'Social Posts' },
   edm: { section: 'Dashboards', crumb: 'EDMs', title: 'EDMs' },
@@ -57,4 +67,10 @@ export function isToolTab(tab) {
 
 export function isSystemTab(tab) {
   return tab.startsWith('system-')
+}
+
+// Only the Google Sheet / HubSpot dashboards use the year + month filters and
+// the live-sync chrome.
+export function isDashboardTab(tab) {
+  return DASHBOARDS.some(item => item.id === tab)
 }

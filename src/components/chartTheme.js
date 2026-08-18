@@ -1,22 +1,22 @@
 export const CHART_COLORS = {
-  blue: '#4d8dff',
-  blueSoft: '#c9ddff',
-  green: '#3aa37a',
-  coral: '#e35d4a',
-  amber: '#d7a13a',
-  ink: '#1c2430',
-  mute: '#8a93a1',
+  blue: '#0160f7',
+  blueDeep: '#0148c4',
+  blueSoft: '#dbe8ff',
+  sky: '#00a2ff',
+  skyLight: '#5cb8e6',
+  ink: '#0b1020',
+  mute: '#6b7385',
 }
 
 export const CATEGORY_COLORS = {
   'Social Post': CHART_COLORS.blue,
-  EDM: CHART_COLORS.coral,
-  Webinar: CHART_COLORS.green,
-  Podcast: CHART_COLORS.amber,
+  EDM: CHART_COLORS.sky,
+  Webinar: CHART_COLORS.blueDeep,
+  Podcast: CHART_COLORS.skyLight,
 }
 
 export const AXIS_PROPS = {
-  tick: { fontSize: 11, fill: '#8a93a1', fontFamily: 'IBM Plex Sans' },
+  tick: { fontSize: 11, fill: '#6b7385', fontFamily: 'DM Sans' },
   stroke: 'transparent',
   tickLine: false,
   axisLine: false,
@@ -24,11 +24,11 @@ export const AXIS_PROPS = {
 
 export const GRID_PROPS = {
   strokeDasharray: '0',
-  stroke: '#eef1f5',
+  stroke: '#f1f3f7',
   vertical: false,
 }
 
 export const CURSOR_PROPS = {
-  stroke: '#d5dae2',
+  stroke: '#c9cdd7',
   strokeWidth: 1,
 }

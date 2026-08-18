@@ -1,5 +1,5 @@
 // POST { title, date?, speaker? }
-// Creates a Zoom meeting via Server-to-Server OAuth and generates 3 guest registrant links.
+// Creates a Zoom webinar via Server-to-Server OAuth and generates 3 guest registrant links.
 // Requires: ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET in env.
 // Returns 503 with setup instructions if credentials are missing.
 
@@ -11,7 +11,7 @@ export default async function handler(req, res) {
   if (!ZOOM_ACCOUNT_ID || !ZOOM_CLIENT_ID || !ZOOM_CLIENT_SECRET) {
     res.status(503).json({
       error: 'Zoom credentials not configured.',
-      setup: 'Add ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, and ZOOM_CLIENT_SECRET to your Netlify environment variables. Create a Server-to-Server OAuth app at marketplace.zoom.us with Meeting:write scope.',
+      setup: 'Add ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, and ZOOM_CLIENT_SECRET to your Netlify environment variables. Create a Server-to-Server OAuth app at marketplace.zoom.us with webinar:write:webinar and webinar:write:registrant (or the :admin variants).',
     })
     return
   }
@@ -40,33 +40,34 @@ export default async function handler(req, res) {
     res.status(502).json({ error: 'Could not authenticate with Zoom' }); return
   }
 
-  // Create meeting with registration enabled
-  let meeting
+  // Create webinar with registration enabled
+  let webinar
   try {
-    const meetingRes = await fetch('https://api.zoom.us/v2/users/me/meetings', {
+    const webinarRes = await fetch('https://api.zoom.us/v2/users/me/webinars', {
       method: 'POST',
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         topic: title,
-        type: 2,
+        type: 5,
         start_time: date || undefined,
         duration: 60,
         settings: {
           host_video: true,
-          participant_video: true,
+          panelists_video: true,
+          registration: true,
+          approval_type: 0,
           registration_type: 1,
           registrants_confirmation_email: true,
-          waiting_room: false,
         },
       }),
     })
-    if (!meetingRes.ok) {
-      const e = await meetingRes.json()
-      throw new Error(e.message || 'Meeting creation failed')
+    if (!webinarRes.ok) {
+      const e = await webinarRes.json()
+      throw new Error(e.message || 'Webinar creation failed')
     }
-    meeting = await meetingRes.json()
+    webinar = await webinarRes.json()
   } catch (err) {
-    console.error('Zoom meeting error', err)
+    console.error('Zoom webinar error', err)
     res.status(502).json({ error: err.message }); return
   }
 
@@ -79,7 +80,7 @@ export default async function handler(req, res) {
   const guestLinks = []
   for (const label of guestSlots) {
     try {
-      const regRes = await fetch(`https://api.zoom.us/v2/meetings/${meeting.id}/registrants`, {
+      const regRes = await fetch(`https://api.zoom.us/v2/webinars/${webinar.id}/registrants`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -95,11 +96,12 @@ export default async function handler(req, res) {
   }
 
   res.status(200).json({
-    meetingId: meeting.id,
-    topic: meeting.topic,
-    startTime: meeting.start_time,
-    joinUrl: meeting.join_url,
-    hostUrl: meeting.start_url,
+    webinarId: webinar.id,
+    meetingId: webinar.id,
+    topic: webinar.topic,
+    startTime: webinar.start_time,
+    joinUrl: webinar.join_url,
+    hostUrl: webinar.start_url,
     guestLinks,
   })
 }
