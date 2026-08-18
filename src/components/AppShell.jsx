@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  Database, FolderOpen, HelpCircle, Home, RefreshCw, Search,
+  HelpCircle, Home, Menu, PanelLeftClose, RefreshCw, Search, X,
 } from 'lucide-react'
 import { DASHBOARDS, PAGE_META, SYSTEMS, TOOLS, WORKSPACE, isDashboardTab } from '@/config/navigation.js'
 import { Button } from '@/components/ui/button.jsx'
@@ -19,6 +19,10 @@ function formatTimeAgo(date) {
   return `${Math.floor(minutes / 60)}h ago`
 }
 
+function isDesktop() {
+  return window.matchMedia('(min-width: 768px)').matches
+}
+
 export default function AppShell({
   tab,
   onTabChange,
@@ -34,6 +38,7 @@ export default function AppShell({
 }) {
   const [, tick] = useState(0)
   const [query, setQuery] = useState('')
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const meta = PAGE_META[tab] || PAGE_META.overview
   const showFilters = isDashboardTab(tab)
 
@@ -41,6 +46,30 @@ export default function AppShell({
     const id = setInterval(() => tick(n => n + 1), 15_000)
     return () => clearInterval(id)
   }, [])
+
+  useEffect(() => {
+    setSidebarOpen(isDesktop())
+  }, [])
+
+  useEffect(() => {
+    if (!sidebarOpen) return undefined
+    const onKey = (event) => {
+      if (event.key === 'Escape') setSidebarOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [sidebarOpen])
+
+  useEffect(() => {
+    if (sidebarOpen && !isDesktop()) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [sidebarOpen])
 
   const normalizedQuery = query.trim().toLowerCase()
   const visibleDashboards = DASHBOARDS.filter(item =>
@@ -56,10 +85,25 @@ export default function AppShell({
     !normalizedQuery || item.label.toLowerCase().includes(normalizedQuery)
   )
 
+  const selectTab = (id) => {
+    onTabChange(id)
+    if (!isDesktop()) setSidebarOpen(false)
+  }
+
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <header className="bg-brand-gradient z-20 flex h-14 items-center justify-between px-4 text-white lg:px-6">
+      <header className="bg-brand-gradient z-50 flex h-14 items-center justify-between px-4 text-white lg:px-6">
         <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={sidebarOpen ? 'Close sidebar' : 'Open sidebar'}
+            aria-expanded={sidebarOpen}
+            onClick={() => setSidebarOpen(open => !open)}
+            className="text-white/85 hover:bg-white/15 hover:text-white"
+          >
+            {sidebarOpen ? <PanelLeftClose /> : <Menu />}
+          </Button>
           <img
             src="/brand/vygo-wordmark-white.png"
             alt="Vygo"
@@ -83,9 +127,24 @@ export default function AppShell({
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <aside className="hidden w-[248px] shrink-0 border-r border-border bg-white md:flex md:flex-col">
-          <div className="p-3">
-            <div className="relative">
+        {sidebarOpen && (
+          <button
+            type="button"
+            aria-label="Close sidebar"
+            className="fixed inset-0 top-14 z-30 bg-black/35 md:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
+
+        <aside
+          className={cn(
+            'z-40 flex w-[248px] shrink-0 flex-col border-r border-border bg-white transition-transform duration-200 ease-out',
+            'fixed inset-x-auto bottom-0 left-0 top-14 md:static md:top-auto md:translate-x-0',
+            sidebarOpen ? 'translate-x-0' : '-translate-x-full md:hidden'
+          )}
+        >
+          <div className="flex items-center gap-2 p-3">
+            <div className="relative flex-1">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={query}
@@ -94,16 +153,25 @@ export default function AppShell({
                 className="h-8 bg-muted/70 pl-8"
               />
             </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Close sidebar"
+              onClick={() => setSidebarOpen(false)}
+              className="size-8 shrink-0 text-muted-foreground md:hidden"
+            >
+              <X className="size-4" />
+            </Button>
           </div>
           <nav className="flex-1 overflow-y-auto px-2 pb-4">
-            <NavItem icon={Home} label="Home" active={tab === 'overview'} onClick={() => onTabChange('overview')} />
+            <NavItem icon={Home} label="Home" active={tab === 'overview'} onClick={() => selectTab('overview')} />
             {visibleWorkspace.map(item => (
               <NavItem
                 key={item.id}
                 icon={item.icon}
                 label={item.label}
                 active={tab === item.id}
-                onClick={() => onTabChange(item.id)}
+                onClick={() => selectTab(item.id)}
               />
             ))}
 
@@ -116,7 +184,7 @@ export default function AppShell({
                     icon={item.icon}
                     label={item.label}
                     active={tab === item.id}
-                    onClick={() => onTabChange(item.id)}
+                    onClick={() => selectTab(item.id)}
                   />
                 ))}
               </>
@@ -131,7 +199,7 @@ export default function AppShell({
                     icon={item.icon}
                     label={item.label}
                     active={tab === item.id}
-                    onClick={() => onTabChange(item.id)}
+                    onClick={() => selectTab(item.id)}
                   />
                 ))}
               </>
@@ -146,17 +214,9 @@ export default function AppShell({
                     icon={item.icon}
                     label={item.label}
                     active={tab === item.id}
-                    onClick={() => onTabChange(item.id)}
+                    onClick={() => selectTab(item.id)}
                   />
                 ))}
-              </>
-            )}
-
-            {!normalizedQuery && (
-              <>
-                <p className="mt-4 mb-1 px-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Connect</p>
-                <NavItem icon={Database} label="Data sources" muted />
-                <NavItem icon={FolderOpen} label="Master sheet" muted />
               </>
             )}
           </nav>
@@ -195,38 +255,6 @@ export default function AppShell({
                 <Badge variant="live">{loading ? 'Syncing' : 'Live'}</Badge>
               </div>
             )}
-            <div className="mt-3 flex flex-col gap-2 md:hidden">
-              <div className="flex gap-1 overflow-x-auto scroll-slim">
-                {[...WORKSPACE, ...DASHBOARDS].map(item => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => onTabChange(item.id)}
-                    className={cn(
-                      'shrink-0 rounded-md px-2.5 py-1.5 text-[12px] font-medium',
-                      tab === item.id ? 'bg-brand-soft text-brand' : 'text-muted-foreground'
-                    )}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-              <div className="flex gap-1 overflow-x-auto scroll-slim">
-                {TOOLS.map(item => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => onTabChange(item.id)}
-                    className={cn(
-                      'shrink-0 rounded-md px-2.5 py-1.5 text-[12px] font-medium',
-                      tab === item.id ? 'bg-brand-soft text-brand' : 'text-muted-foreground'
-                    )}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
 
           <main className="flex-1 overflow-y-auto p-5 lg:p-7">
@@ -238,16 +266,14 @@ export default function AppShell({
   )
 }
 
-function NavItem({ icon: Icon, label, active, muted, onClick }) {
+function NavItem({ icon: Icon, label, active, onClick }) {
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
         'flex w-full items-center gap-2.5 rounded-md px-2 py-[7px] text-left text-[13px]',
-        active && 'bg-brand-soft font-medium text-brand',
-        !active && !muted && 'text-foreground hover:bg-muted',
-        muted && 'cursor-default text-muted-foreground'
+        active ? 'bg-brand-soft font-medium text-brand' : 'text-foreground hover:bg-muted'
       )}
     >
       <Icon className="size-4 shrink-0" strokeWidth={1.7} />

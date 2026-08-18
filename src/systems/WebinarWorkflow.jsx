@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  AlertCircle, ArrowLeft, Calendar, CheckCircle, Clock,
-  Loader2, Mail, MessageSquare, Mic, MicOff, Plus,
+  AlertCircle, ArrowLeft, Calendar, Check, CheckCircle, Clock,
+  Copy, ExternalLink, Link2, Loader2, Mail, MessageSquare, Mic, MicOff, Plus,
   RefreshCw, Sparkles, ThumbsDown, ThumbsUp, Upload,
   User, Video, X,
 } from 'lucide-react'
@@ -13,6 +13,7 @@ import {
   useProjects, withActivity,
 } from '@/lib/projectsStore.js'
 import { WEBINAR_STEPS } from '@/lib/webinarSteps.js'
+import { callBrief } from '@/tools/shared.jsx'
 import { cn } from '@/lib/utils'
 
 // ── Step definitions ──────────────────────────────────────────────────────
@@ -130,6 +131,62 @@ async function parseApiJson(res) {
 
 function apiErrorMessage(data, status, fallback) {
   return data?.error || data?.errorMessage || data?.message || fallback || `Request failed (${status})`
+}
+
+function parseZoomOutput(text) {
+  if (!text) return null
+  const lines = text.split('\n')
+  const field = (prefix) => {
+    const line = lines.find(l => l.toLowerCase().startsWith(prefix.toLowerCase()))
+    return line ? line.slice(prefix.length).trim() : ''
+  }
+  const webinar = field('Webinar:')
+  const date = field('Date:')
+  const host = field('Host link:')
+  const guests = []
+  for (const line of lines) {
+    const m = line.match(/^Guest link \d+(?:\s+\(([^)]+)\))?:\s*(.+)$/i)
+    if (m) guests.push({ label: m[1] || `Guest ${guests.length + 1}`, url: m[2].trim() })
+  }
+  const warning = lines.filter(l => l.includes('Zoom API not configured') || l.startsWith('Add ZOOM_')).join('\n').trim()
+  if (!webinar && !host && guests.length === 0) return null
+  return { webinar, date, host, guests, warning }
+}
+
+function compactZoomUrl(url) {
+  if (!url) return ''
+  try {
+    const u = new URL(url.startsWith('http') ? url : `https://${url}`)
+    return `${u.host}${u.pathname}`
+  } catch {
+    return url
+  }
+}
+
+function formatZoomDate(value) {
+  if (!value || /^tbc/i.test(value)) return value || 'TBC'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return value
+  return d.toLocaleString('en-AU', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  })
+}
+
+function zoomShareText({ webinar, date, host, guests }) {
+  const lines = [
+    webinar,
+    formatZoomDate(date),
+    '',
+    host ? `Host start link:\n${host}` : '',
+    ...guests.map((g, i) => `${g.label || `Guest ${i + 1}`}:\n${g.url}`),
+  ].filter(Boolean)
+  return lines.join('\n')
 }
 
 const EXTRACT_STAGES = [
@@ -350,38 +407,54 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
       return
     }
 
-    // Claude brief
-    if (stepDef.id === 'brief' && (action === 'generate' || action === 'send')) {
+    // Claude EDM variants
+    if (stepDef.id === 'edm' && (action === 'generate' || action === 'send')) {
       setLoading(true); setError(null)
       try {
-        const notesLines = [project.notes, project.joelContext ? `Joel 1:1 context:\n${project.joelContext}` : ''].filter(Boolean).join('\n\n')
-        const res = await fetch('/api/generate-brief', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            kind: 'webinar',
-            topic: project.title,
-            speaker: project.speaker,
-            date: project.date,
-            notes: notesLines,
-            assets: [
-              'Title + alternatives', 'Short description', 'Landing page copy',
-              'LinkedIn launch post', 'Speaker announcement post',
-              'Registration EDM', 'Reminder EDM', 'Last chance to register',
-              'Post-webinar follow-up', 'Repurposing ideas',
-            ],
-          }),
+        const notesLines = [
+          project.notes,
+          project.transcript ? `Planning transcript:\n${project.transcript}` : '',
+        ].filter(Boolean).join('\n\n')
+        const text = await callBrief({
+          kind: 'edm',
+          topic: project.title,
+          speaker: project.speaker,
+          date: project.date,
+          notes: notesLines,
         })
-        const data = await res.json()
-        if (!res.ok) throw new Error(data.error || 'Brief generation failed')
-        advanceStep(data.text, false)
+        advanceStep(text, true)
       } catch (err) {
         setError(err.message)
       } finally { setLoading(false) }
       return
     }
 
-    // EDM + Future Campus — fallback to local output (no dedicated API yet)
+    // Claude brief
+    if (stepDef.id === 'brief' && (action === 'generate' || action === 'send')) {
+      setLoading(true); setError(null)
+      try {
+        const notesLines = [project.notes, project.joelContext ? `Joel 1:1 context:\n${project.joelContext}` : ''].filter(Boolean).join('\n\n')
+        const text = await callBrief({
+          kind: 'webinar',
+          topic: project.title,
+          speaker: project.speaker,
+          date: project.date,
+          notes: notesLines,
+          assets: [
+            'Title + alternatives', 'Short description', 'Landing page copy',
+            'LinkedIn launch post', 'Speaker announcement post',
+            'Registration EDM', 'Reminder EDM', 'Last chance to register',
+            'Post-webinar follow-up', 'Repurposing ideas', 'Speaker Q&A',
+          ],
+        })
+        advanceStep(text, false)
+      } catch (err) {
+        setError(err.message)
+      } finally { setLoading(false) }
+      return
+    }
+
+    // Future Campus — fallback to local output (no dedicated API yet)
     if ((action === 'generate' || action === 'send') && stepDef.fallbackOutput) {
       advanceStep(stepDef.fallbackOutput(project), stepDef.needsApproval)
       return
@@ -833,10 +906,11 @@ function PipelineView({ project, onBack, onStepAction, onDelete, onUpdateDate, o
 
 function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, project, loading, error, joelContext, onJoelContextChange, onAction }) {
   const { IntegrationIcon } = stepDef
+  const zoomOutput = stepDef.id === 'zoom' ? parseZoomOutput(stepState.output) : null
 
   return (
     <div className={cn(
-      'flex gap-4 rounded-lg p-4 transition-all',
+      'flex gap-4 overflow-hidden rounded-lg p-4 transition-all',
       isActive && 'bg-white shadow-sm ring-1 ring-border',
       isPast && 'opacity-55',
       !isActive && !isPast && !isBlocked && 'opacity-35'
@@ -872,12 +946,19 @@ function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, proj
 
         {/* Output */}
         {stepState.output && (isActive || isPast) && (
-          <pre className={cn(
-            'mt-3 whitespace-pre-wrap rounded-md p-3 font-mono text-[11px] leading-relaxed',
-            stepState.status === 'waiting_approval' ? 'bg-amber-50 text-amber-900' : 'bg-muted text-muted-foreground'
-          )}>
-            {stepState.output}
-          </pre>
+          zoomOutput ? (
+            <ZoomLinksPanel
+              parsed={zoomOutput}
+              awaiting={stepState.status === 'waiting_approval'}
+            />
+          ) : (
+            <pre className={cn(
+              'mt-3 max-w-full overflow-hidden whitespace-pre-wrap break-all rounded-md p-3 font-mono text-[11px] leading-relaxed',
+              stepState.status === 'waiting_approval' ? 'bg-amber-50 text-amber-900' : 'bg-muted text-muted-foreground'
+            )}>
+              {stepState.output}
+            </pre>
+          )
         )}
 
         {/* Joel context — Step 6 only */}
@@ -932,6 +1013,7 @@ function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, proj
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Loader2 className="size-3.5 animate-spin" />
                 {stepDef.id === 'brief' ? 'Generating brief with Claude…' :
+                 stepDef.id === 'edm' ? 'Generating EDM variants with Claude…' :
                  stepDef.id === 'zoom' ? 'Creating Zoom webinar…' :
                  stepDef.id === 'chase' ? 'Sending Slack ping…' : 'Working…'}
               </div>
@@ -947,6 +1029,121 @@ function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, proj
             </Button>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+function ZoomLinksPanel({ parsed, awaiting }) {
+  const [copied, setCopied] = useState(null)
+  const shareText = zoomShareText(parsed)
+
+  const copy = async (key, value) => {
+    if (!value) return
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopied(key)
+      window.setTimeout(() => setCopied(current => current === key ? null : current), 1600)
+    } catch { /* clipboard may be blocked */ }
+  }
+
+  return (
+    <div className={cn(
+      'mt-3 overflow-hidden rounded-md border',
+      awaiting ? 'border-amber-200 bg-amber-50/80' : 'border-border bg-muted/60'
+    )}>
+      <div className="flex items-start justify-between gap-3 border-b border-black/5 px-3 py-2.5">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-foreground">{parsed.webinar || 'Zoom webinar'}</p>
+          <p className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+            <Calendar className="size-3 shrink-0" />
+            <span className="truncate">{formatZoomDate(parsed.date)}</span>
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => copy('all', shareText)}
+          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-white px-2 py-1 text-[11px] font-medium text-foreground hover:bg-muted"
+        >
+          {copied === 'all' ? <Check className="size-3 text-green-600" /> : <Copy className="size-3" />}
+          {copied === 'all' ? 'Copied pack' : 'Copy all'}
+        </button>
+      </div>
+
+      <div className="space-y-1.5 p-2">
+        {parsed.host && (
+          <LinkCopyRow
+            icon={Video}
+            label="Host start link"
+            hint="Copies the full start URL, including the host token"
+            url={parsed.host}
+            copied={copied === 'host'}
+            onCopy={() => copy('host', parsed.host)}
+            emphasis
+          />
+        )}
+        {parsed.guests.map((guest, i) => (
+          <LinkCopyRow
+            key={`${guest.label}-${i}`}
+            icon={Link2}
+            label={guest.label}
+            url={guest.url}
+            copied={copied === `guest-${i}`}
+            onCopy={() => copy(`guest-${i}`, guest.url)}
+          />
+        ))}
+      </div>
+
+      {parsed.warning && (
+        <p className="border-t border-amber-200/80 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
+          {parsed.warning}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function LinkCopyRow({ icon: Icon, label, hint, url, copied, onCopy, emphasis }) {
+  const display = compactZoomUrl(url)
+  const href = url.startsWith('http') ? url : `https://${url}`
+
+  return (
+    <div className={cn(
+      'flex items-center gap-2 rounded-md px-2 py-1.5',
+      emphasis ? 'bg-white shadow-sm ring-1 ring-black/5' : 'bg-white/70'
+    )}>
+      <div className={cn(
+        'flex size-7 shrink-0 items-center justify-center rounded-md',
+        emphasis ? 'bg-brand-soft text-brand' : 'bg-muted text-muted-foreground'
+      )}>
+        <Icon className="size-3.5" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-[11px] font-medium text-foreground">{label}</p>
+        <p className="truncate font-mono text-[11px] text-muted-foreground" title={url}>{display}</p>
+        {hint && <p className="text-[10px] text-muted-foreground/80">{hint}</p>}
+      </div>
+      <div className="flex shrink-0 items-center gap-0.5">
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+          aria-label={`Open ${label}`}
+        >
+          <ExternalLink className="size-3.5" />
+        </a>
+        <button
+          type="button"
+          onClick={onCopy}
+          className={cn(
+            'inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium',
+            copied ? 'bg-green-50 text-green-700' : 'text-foreground hover:bg-muted'
+          )}
+        >
+          {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+          {copied ? 'Copied' : 'Copy'}
+        </button>
       </div>
     </div>
   )

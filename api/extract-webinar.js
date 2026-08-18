@@ -1,6 +1,8 @@
 // POST { transcript } → { title, speaker, date, dateConfirmed, notes, joelAction }
 // Uses Claude Haiku for fast, cheap extraction. Falls back gracefully if unconfigured.
 
+import { anthropicAuthError, anthropicKeyConfigError, readAnthropicApiKey } from './anthropicKey.js'
+
 const SYSTEM = `You extract structured data from webinar planning meeting transcripts.
 Return ONLY a JSON object — no prose, no markdown fences, no explanation.
 
@@ -16,8 +18,9 @@ export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store')
   if (req.method !== 'POST') { res.setHeader('Allow', 'POST'); res.status(405).end(); return }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) { res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' }); return }
+  const apiKey = readAnthropicApiKey()
+  const keyError = anthropicKeyConfigError(apiKey)
+  if (keyError) { res.status(500).json({ error: keyError }); return }
 
   const { transcript } = req.body || {}
   if (!String(transcript || '').trim()) { res.status(400).json({ error: 'transcript is required' }); return }
@@ -38,7 +41,13 @@ export default async function handler(req, res) {
       }),
     })
 
-    if (!response.ok) { res.status(response.status).json({ error: 'Extraction service error' }); return }
+    if (!response.ok) {
+      const raw = await response.text()
+      let detail = ''
+      try { detail = JSON.parse(raw)?.error?.message || '' } catch { /* ignore */ }
+      res.status(response.status).json({ error: anthropicAuthError(response.status, detail) || 'Extraction service error' })
+      return
+    }
 
     const data = await response.json()
     const raw = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('')

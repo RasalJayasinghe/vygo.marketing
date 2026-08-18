@@ -54,7 +54,13 @@ export function toNetlify(fn) {
       },
     }
 
-    await fn(req, res)
+    try {
+      await fn(req, res)
+    } catch (err) {
+      console.error('Function handler failed', err)
+      statusCode = 500
+      payload = JSON.stringify({ error: err.message || 'Function failed' })
+    }
     return new Response(payload, { status: statusCode, headers: resHeaders })
   }
 }

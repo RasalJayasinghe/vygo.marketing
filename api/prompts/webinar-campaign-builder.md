@@ -39,6 +39,7 @@ Produce only the assets listed in "Assets requested" in the user message, in tha
 - "Last chance to register" → Last chance to register post/email
 - "Post-webinar follow-up" → Post-webinar follow-up email
 - "Repurposing ideas" → Repurposing ideas (post-webinar)
+- "Speaker Q&A" → Speaker Q&A
 
 Each asset gets a clear markdown heading matching the requested label.
 
@@ -81,6 +82,9 @@ Thank you (brief) → 2–3 concrete takeaways or key stats from the session (us
 
 ### Repurposing ideas
 5–8 concrete ideas mapped to channel, e.g.: 60–90 sec clip + hook for LinkedIn, 3 quote graphics pulled from specific moments, a "key takeaways" carousel, a blog recap targeting the same problem keyword, a newsletter feature, a sales enablement one-pager for the AE team, a follow-up nurture email 2 weeks out linking to the recording.
+
+### Speaker Q&A
+8–12 live-session questions grouped as Opening, Challenge, Practice, and Close. Questions should be specific to this topic and speaker — not generic "tell us about your journey." If 1:1 context is in the notes, fold 1–2 of those points into questions. Include a short suggested follow-up probe under 2–3 of the strongest questions.
 
 ## Voice rules (apply to every asset)
 

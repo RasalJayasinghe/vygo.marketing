@@ -1,0 +1,33 @@
+// Shared Anthropic key loading. Netlify often stores values with wrapping
+// quotes, a Bearer prefix, or trailing newlines when pasted from the UI.
+
+export function readAnthropicApiKey() {
+  let key = String(process.env.ANTHROPIC_API_KEY || '')
+  key = key.replace(/^\uFEFF/, '').trim()
+  if (
+    (key.startsWith('"') && key.endsWith('"')) ||
+    (key.startsWith("'") && key.endsWith("'"))
+  ) {
+    key = key.slice(1, -1).trim()
+  }
+  if (/^bearer\s+/i.test(key)) key = key.replace(/^bearer\s+/i, '').trim()
+  return key.replace(/[\u200B-\u200D\uFEFF]/g, '')
+}
+
+export function anthropicKeyConfigError(key) {
+  if (!key) {
+    return 'ANTHROPIC_API_KEY is not configured on the server.'
+  }
+  if (!key.startsWith('sk-ant-')) {
+    return 'ANTHROPIC_API_KEY is set in Netlify, but the value is not an Anthropic API key. Paste a key from console.anthropic.com that starts with sk-ant-, with no quotes around it.'
+  }
+  if (key.length < 40) {
+    return 'ANTHROPIC_API_KEY looks truncated. Paste the full key from console.anthropic.com into Netlify, with no quotes.'
+  }
+  return null
+}
+
+export function anthropicAuthError(status, detail) {
+  if (status !== 401 && status !== 403) return detail
+  return 'Anthropic rejected the Netlify ANTHROPIC_API_KEY value (invalid key). The variable name is correct — replace the value with a new key from console.anthropic.com (starts with sk-ant-, no quotes), then restart netlify dev.'
+}

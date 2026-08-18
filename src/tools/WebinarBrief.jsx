@@ -15,6 +15,7 @@ const WEBINAR_ASSET_OPTIONS = [
   'Last chance to register',
   'Post-webinar follow-up',
   'Repurposing ideas',
+  'Speaker Q&A',
 ]
 
 export default function WebinarBrief() {

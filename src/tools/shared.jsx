@@ -8,8 +8,15 @@ export async function callBrief(payload) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  const body = await res.json()
-  if (!res.ok) throw new Error(body.error || 'Generation failed')
+  const raw = await res.text()
+  let body = {}
+  try {
+    body = raw ? JSON.parse(raw) : {}
+  } catch {
+    throw new Error(raw.trim().slice(0, 240) || `Generation failed (${res.status})`)
+  }
+  if (!res.ok) throw new Error(body.error || body.errorMessage || 'Generation failed')
+  if (!body.text) throw new Error('Generation returned an empty draft.')
   return body.text
 }
 
