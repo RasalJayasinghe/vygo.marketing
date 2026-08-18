@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   AlertCircle, ArrowLeft, Calendar, Check, CheckCircle, Clock,
-  Copy, ExternalLink, Link2, Loader2, Mail, MessageSquare, Mic, MicOff, Plus,
-  RefreshCw, Sparkles, ThumbsDown, ThumbsUp, Upload,
+  Copy, ExternalLink, Link2, Loader2, Mail, Megaphone, MessageSquare, Mic, MicOff, Phone,
+  Plus, RefreshCw, Sparkles, ThumbsDown, ThumbsUp, Upload,
   User, Video, X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button.jsx'
@@ -12,7 +12,10 @@ import {
   deleteProject as removeProject, setProjects, updateProject as updateStoreProject,
   useProjects, withActivity,
 } from '@/lib/projectsStore.js'
-import { WEBINAR_STEPS } from '@/lib/webinarSteps.js'
+import {
+  BRIEF_ASSETS, PROMOTE_ASSETS, WEBINAR_STEPS, WRAP_ASSETS,
+  chaseStatus, emptyChase, resolveChase, startChase, stepIndex,
+} from '@/lib/webinarSteps.js'
 import { callBrief } from '@/tools/shared.jsx'
 import { cn } from '@/lib/utils'
 
@@ -30,15 +33,16 @@ const STEP_DETAILS = {
       `Variant A — "The future of ${p.title}"\nVariant B — "How top universities are changing the game"\nVariant C — "Join us: a live conversation with ${p.speaker || '[Speaker]'}"\n\n→ Three full email drafts ready for review.`,
   },
   'future-campus': {
-    integration: 'Gmail',
+    integration: 'Draft only',
     IntegrationIcon: Mail,
-    description: 'Auto-draft outbound email to Jayson at Future Campus from the EDM output. Manual approval required — no fully automated outbound.',
-    note: "Joel's rule: no fully automated outbound emails.",
+    description: 'Draft the outbound email to Jayson at Future Campus from the EDM output. This is a local template — it is not sent.',
+    note: 'Placeholder, not a live send. Jayson will not receive this until you copy the draft into Gmail yourself. No Gmail connection is wired up.',
     actionLabel: 'Draft email',
-    approvalLabel: 'Approve & send via Gmail',
+    approvalLabel: 'Approve draft (copy to send yourself)',
     needsApproval: true,
+    placeholderSend: true,
     fallbackOutput: (p) =>
-      `To: jayson@futurecampus.com\nSubject: Webinar guest spot — ${p.title}\n\nHi Jayson,\n\nWe'd love to have you join our upcoming webinar on "${p.title}"${p.date ? ` on ${p.date}` : ''}. Given Future Campus's audience of higher-ed marketers, we think it'd be a great fit.\n\n[Speaker intro and CTA goes here]\n\n— Vygo Marketing`,
+      `To: jayson@futurecampus.com\nSubject: Webinar guest spot — ${p.title}\n\nHi Jayson,\n\nWe'd love to have you join our upcoming webinar on "${p.title}"${p.date ? ` on ${p.date}` : ''}. Given Future Campus's audience of higher-ed marketers, we think it'd be a great fit.\n\n[Speaker intro and CTA goes here]\n\n— Vygo Marketing\n\n—\nNot sent. Copy this into Gmail. The workflow does not email Future Campus.`,
   },
   zoom: {
     integration: 'Zoom API',
@@ -51,24 +55,49 @@ const STEP_DETAILS = {
   chase: {
     integration: 'Slack',
     IntegrationIcon: MessageSquare,
-    description: 'Send a Slack ping when workflow is blocked on their action. Pings are recorded — the cron job follows up every 3 days automatically. Joel replies "yes" to advance.',
+    description: 'Send a Slack ping to Joel/Lyndon. Sending the ping completes this step and starts the 3-day no-reply timer on Guest response — you still have to mark the answer there.',
     actionLabel: 'Send Slack ping',
     needsApproval: false,
   },
   'guest-response': {
-    integration: null,
-    IntegrationIcon: null,
-    description: 'Guest confirms → workflow continues. Guest declines or no reply after 7 days → workflow pauses, new guest search triggered, meeting with Joel/Lyndon booked.',
+    integration: 'Manual',
+    IntegrationIcon: Clock,
+    description: 'Mark the guest’s answer here. Slack is not read automatically, and neither is email — if they reply outside Slack, tap Confirmed by email. The no-reply timer nags until you do.',
     needsApproval: false,
     isGuestStep: true,
   },
   brief: {
     integration: 'Claude AI',
     IntegrationIcon: Sparkles,
-    description: 'Generate the full campaign brief and speaker Q&A once partner and date are both confirmed. Joel adds 1:1 context before generation.',
+    description: 'Generate the speaker brief and live Q&A once the guest and date are confirmed. Campaign promo assets come in Promote & remind after the speaker signs off.',
     actionLabel: 'Generate brief',
     needsApproval: false,
     isBriefStep: true,
+  },
+  'content-approval': {
+    integration: 'Speaker',
+    IntegrationIcon: CheckCircle,
+    description: 'Get the speaker to sign off on the brief and Q&A before anything public goes out. This is the old “Approval of Content” gate — the workflow does not skip it.',
+    needsApproval: false,
+    isContentApproval: true,
+  },
+  promote: {
+    integration: 'Claude AI',
+    IntegrationIcon: Megaphone,
+    description: 'Campaign builder: landing page, LinkedIn launch, speaker announcement, registration EDM, reminder, and last-chance push. Approve before anyone sends them.',
+    actionLabel: 'Generate campaign pack',
+    approvalLabel: 'Approve campaign assets',
+    needsApproval: true,
+    isPromoteStep: true,
+  },
+  wrap: {
+    integration: 'Claude AI',
+    IntegrationIcon: Sparkles,
+    description: 'Draft the post-webinar follow-up email and repurposing ideas. Sending, clipping, and logging attendance stay on the project board.',
+    actionLabel: 'Draft follow-up & repurposing',
+    approvalLabel: 'Approve wrap drafts',
+    needsApproval: true,
+    isWrapStep: true,
   },
 }
 
@@ -101,6 +130,7 @@ function makeProject({ title, speaker, date, notes, transcript }) {
     title: title || 'Untitled webinar',
     speaker, date, notes, transcript,
     joelContext: '',
+    chase: emptyChase(),
     createdAt: new Date().toISOString(),
     steps,
   }
@@ -110,13 +140,28 @@ function getActiveStepIdx(project) {
   return project.steps.findIndex(s => s.status !== 'completed')
 }
 
-function overallStatus(project) {
+function overallStatus(project, now = Date.now()) {
   const idx = getActiveStepIdx(project)
   if (idx === -1) return { label: 'Complete', color: 'text-green-600 bg-green-50 border-green-200' }
   const s = project.steps[idx]
   if (s.status === 'blocked') return { label: 'Blocked', color: 'text-red-600 bg-red-50 border-red-200' }
+  const chase = chaseStatus(project, now)
+  if (chase?.phase === 'escalate') return { label: chase.label, color: 'text-red-600 bg-red-50 border-red-200' }
+  if (chase?.phase === 'no_reply' || chase?.phase === 'call_booked') {
+    return { label: chase.label, color: 'text-amber-600 bg-amber-50 border-amber-200' }
+  }
   if (s.status === 'waiting_approval') return { label: 'Needs approval', color: 'text-amber-600 bg-amber-50 border-amber-200' }
+  if (chase) return { label: chase.label, color: 'text-blue-600 bg-blue-50 border-blue-200' }
   return { label: `Step ${idx + 1} of ${STEPS.length}`, color: 'text-blue-600 bg-blue-50 border-blue-200' }
+}
+
+function useNow(ms = 30000) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), ms)
+    return () => clearInterval(id)
+  }, [ms])
+  return now
 }
 
 async function parseApiJson(res) {
@@ -201,6 +246,7 @@ const EMPTY_FORM = { title: '', speaker: '', date: '', notes: '' }
 
 export default function WebinarWorkflow({ initialProjectId = null, onConsumeInitialProject }) {
   const projects = useProjects()
+  const now = useNow()
   const [selectedId, setSelectedId] = useState(initialProjectId)
   const [showNew, setShowNew] = useState(false)
   const [newStep, setNewStep] = useState('drop')
@@ -390,25 +436,95 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
       return
     }
 
-    // Slack ping
-    if (stepDef.id === 'chase' && (action === 'generate' || action === 'send')) {
+    const sendSlack = async ({ followUp = false, escalate = false, completeChase = false }) => {
       setLoading(true); setError(null)
       try {
         const res = await fetch('/api/slack-ping', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectId, projectTitle: project.title, speaker: project.speaker, date: project.date }),
+          body: JSON.stringify({
+            projectId,
+            projectTitle: project.title,
+            speaker: project.speaker,
+            date: project.date,
+            followUp,
+            escalate,
+          }),
         })
         const data = await res.json()
-        const sent = data.slackSent ? '✓ Sent to Slack.' : '⚠ SLACK_WEBHOOK_URL not configured — preview only.\nSet it in Netlify → Site configuration → Environment variables.'
-        advanceStep(`${data.preview}\n\n${sent}`, false)
+        const sent = data.slackSent
+          ? '✓ Sent to Slack.'
+          : '⚠ SLACK_WEBHOOK_URL not configured — preview only.\nSet it in Netlify → Site configuration → Environment variables. The no-reply timer still starts from this ping.'
+        const output = `${data.preview}\n\n${sent}`
+        updateProject(projectId, p => {
+          const steps = p.steps.map(s => ({ ...s }))
+          const chase = startChase(p)
+          if (completeChase) {
+            steps[stepIdx] = { status: 'completed', output }
+            if (stepIdx + 1 < steps.length) steps[stepIdx + 1].status = 'in_progress'
+          } else {
+            const existing = steps[stepIdx].output ? `${steps[stepIdx].output}\n\n---\n\n` : ''
+            steps[stepIdx] = { ...steps[stepIdx], output: `${existing}${output}` }
+          }
+          const message = escalate
+            ? 'Escalated to a call — Slack pinged Joel/Lyndon'
+            : followUp
+              ? '3-day Slack follow-up sent'
+              : 'Slack ping sent — 3-day no-reply timer started'
+          return withActivity({ ...p, steps, chase }, message, escalate ? 'blocked' : 'step')
+        })
       } catch (err) {
         setError(err.message)
       } finally { setLoading(false) }
+    }
+
+    const generateCampaign = async (assets, waitApproval, extraNotes = '') => {
+      setLoading(true); setError(null)
+      setStreamingDrafts(d => ({ ...d, [stepIdx]: '' }))
+      try {
+        const briefOut = project.steps[stepIndex('brief')]?.output
+        const notesLines = [
+          project.notes,
+          project.joelContext ? `Joel 1:1 context:\n${project.joelContext}` : '',
+          briefOut ? `Speaker brief already generated:\n${briefOut}` : '',
+          extraNotes,
+        ].filter(Boolean).join('\n\n')
+        const text = await callBrief({
+          kind: 'webinar',
+          topic: project.title,
+          speaker: project.speaker,
+          date: project.date,
+          notes: notesLines,
+          assets,
+        }, {
+          onChunk: (partial) => setStreamingDrafts(d => ({ ...d, [stepIdx]: partial })),
+        })
+        advanceStep(text, waitApproval)
+      } catch (err) {
+        setError(err.message)
+      } finally {
+        setLoading(false)
+        setStreamingDrafts(d => {
+          const next = { ...d }
+          delete next[stepIdx]
+          return next
+        })
+      }
+    }
+
+    if (stepDef.id === 'chase' && (action === 'generate' || action === 'send')) {
+      await sendSlack({ completeChase: true })
+      return
+    }
+    if (stepDef.id === 'guest-response' && action === 'followup') {
+      await sendSlack({ followUp: true })
+      return
+    }
+    if (stepDef.id === 'guest-response' && action === 'escalate_ping') {
+      await sendSlack({ escalate: true })
       return
     }
 
-    // Claude EDM variants
     if (stepDef.id === 'edm' && (action === 'generate' || action === 'send')) {
       setLoading(true); setError(null)
       setStreamingDrafts(d => ({ ...d, [stepIdx]: '' }))
@@ -440,73 +556,85 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
       return
     }
 
-    // Claude brief
     if (stepDef.id === 'brief' && (action === 'generate' || action === 'send')) {
-      setLoading(true); setError(null)
-      setStreamingDrafts(d => ({ ...d, [stepIdx]: '' }))
-      try {
-        const notesLines = [project.notes, project.joelContext ? `Joel 1:1 context:\n${project.joelContext}` : ''].filter(Boolean).join('\n\n')
-        const text = await callBrief({
-          kind: 'webinar',
-          topic: project.title,
-          speaker: project.speaker,
-          date: project.date,
-          notes: notesLines,
-          assets: [
-            'Title + alternatives', 'Short description', 'Landing page copy',
-            'LinkedIn launch post', 'Speaker announcement post',
-            'Speaker Q&A', 'Repurposing ideas',
-          ],
-        }, {
-          onChunk: (partial) => setStreamingDrafts(d => ({ ...d, [stepIdx]: partial })),
-        })
-        advanceStep(text, false)
-      } catch (err) {
-        setError(err.message)
-      } finally {
-        setLoading(false)
-        setStreamingDrafts(d => {
-          const next = { ...d }
-          delete next[stepIdx]
-          return next
-        })
-      }
+      await generateCampaign(BRIEF_ASSETS, false)
+      return
+    }
+    if (stepDef.id === 'promote' && (action === 'generate' || action === 'send')) {
+      await generateCampaign(
+        PROMOTE_ASSETS,
+        true,
+        'This is the Promote & remind stage. Produce registration-stage assets only. Reminder and last-chance copy should assume a live date is on file; flag [date] if missing.',
+      )
+      return
+    }
+    if (stepDef.id === 'wrap' && (action === 'generate' || action === 'send')) {
+      await generateCampaign(
+        WRAP_ASSETS,
+        true,
+        'Post-webinar wrap. Use placeholders for [recording link] and session takeaways if the recording is not in the notes yet.',
+      )
       return
     }
 
-    // Future Campus — fallback to local output (no dedicated API yet)
     if ((action === 'generate' || action === 'send') && stepDef.fallbackOutput) {
       advanceStep(stepDef.fallbackOutput(project), stepDef.needsApproval)
       return
     }
 
-    // Synchronous state transitions
     const ACTIVITY_BY_ACTION = {
       approve: [`${stepDef.label} approved`, 'step'],
       revise: [`${stepDef.label} sent back for revision`, 'note'],
-      guest_confirmed: ['Guest confirmed', 'step'],
+      guest_confirmed: ['Guest confirmed in Slack', 'step'],
+      guest_confirmed_email: ['Guest confirmed by email (marked manually)', 'step'],
       guest_declined: ['Guest declined — workflow paused', 'blocked'],
       restart_guest: ['Restarted from the chase step with a new guest', 'note'],
+      speaker_approved: ['Speaker signed off on the brief', 'step'],
+      speaker_revise: ['Speaker requested changes — back to the brief', 'note'],
+      call_booked: ['Call booked with Joel/Lyndon — still waiting on confirmation', 'note'],
     }
 
     updateProject(projectId, p => {
       const steps = p.steps.map(s => ({ ...s }))
+      let chase = p.chase
       if (action === 'approve') {
         steps[stepIdx].status = 'completed'
         if (stepIdx + 1 < steps.length) steps[stepIdx + 1].status = 'in_progress'
       }
       if (action === 'revise') { steps[stepIdx].status = 'in_progress'; steps[stepIdx].output = null }
-      if (action === 'guest_confirmed') {
+      if (action === 'guest_confirmed' || action === 'guest_confirmed_email') {
+        steps[stepIdx].status = 'completed'
+        if (stepIdx + 1 < steps.length) steps[stepIdx + 1].status = 'in_progress'
+        chase = resolveChase(p, { confirmedVia: action === 'guest_confirmed_email' ? 'email' : 'slack' })
+      }
+      if (action === 'guest_declined') {
+        steps[stepIdx].status = 'blocked'
+        chase = resolveChase(p)
+      }
+      if (action === 'restart_guest') {
+        const chaseIdx = stepIndex('chase')
+        const guestIdx = stepIndex('guest-response')
+        if (chaseIdx >= 0) steps[chaseIdx] = { status: 'in_progress', output: null }
+        for (let i = Math.max(guestIdx, 0); i < steps.length; i++) {
+          steps[i] = { status: 'pending', output: null }
+        }
+        chase = emptyChase()
+      }
+      if (action === 'speaker_approved') {
         steps[stepIdx].status = 'completed'
         if (stepIdx + 1 < steps.length) steps[stepIdx + 1].status = 'in_progress'
       }
-      if (action === 'guest_declined') { steps[stepIdx].status = 'blocked' }
-      if (action === 'restart_guest') {
-        steps[3] = { status: 'in_progress', output: null }
-        steps[4] = { status: 'pending', output: null }
+      if (action === 'speaker_revise') {
+        const briefIdx = stepIndex('brief')
+        steps[briefIdx] = { ...steps[briefIdx], status: 'in_progress' }
+        steps[stepIdx] = { status: 'pending', output: null }
+      }
+      if (action === 'call_booked') {
+        chase = { ...(p.chase || emptyChase()), callBookedAt: new Date().toISOString() }
       }
       const entry = ACTIVITY_BY_ACTION[action]
-      return entry ? withActivity({ ...p, steps }, entry[0], entry[1]) : { ...p, steps }
+      const next = { ...p, steps, chase }
+      return entry ? withActivity(next, entry[0], entry[1]) : next
     })
   }, [projects, updateProject])
 
@@ -532,6 +660,7 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
         stepLoading={stepLoading}
         stepError={stepError}
         streamingDrafts={streamingDrafts}
+        now={now}
       />
     )
   }
@@ -539,7 +668,7 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
   return (
     <div className="max-w-5xl">
       {/* ── Workflow strip ── */}
-      <div className="mb-6 grid grid-cols-6 gap-2">
+      <div className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
         {STEPS.map((s, i) => (
           <div key={s.id} className="flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs text-muted-foreground">
             <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-bold text-foreground">{i + 1}</span>
@@ -565,7 +694,7 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
               </div>
               <p className="text-sm font-semibold">No webinars in progress</p>
               <p className="mt-1 text-xs text-muted-foreground max-w-xs mx-auto">
-                Drop a Joel/Lyndon meeting transcript to kick off the 6-step workflow — from EDMs to briefing.
+                Drop a Joel/Lyndon meeting transcript to kick off the workflow — guest chase, speaker sign-off, campaign pack, and post-webinar wrap.
               </p>
               <Button className="mt-5" size="sm" onClick={() => setShowNew(true)}>
                 <Plus className="mr-1.5 size-3.5" /> Start from transcript
@@ -575,10 +704,11 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
 
           <div className="space-y-2.5">
             {projects.map(project => {
-              const status = overallStatus(project)
+              const status = overallStatus(project, now)
               const activeIdx = getActiveStepIdx(project)
-              const completedCount = project.steps.filter(s => s.status === 'completed').length
+              const completedCount = (project.steps || []).filter(s => s.status === 'completed').length
               const activeStep = activeIdx >= 0 ? STEPS[activeIdx] : null
+              const chase = chaseStatus(project, now)
               return (
                 <Card
                   key={project.id}
@@ -606,9 +736,17 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
                             </span>
                           )}
                         </div>
+                        {chase && (chase.phase === 'no_reply' || chase.phase === 'escalate' || chase.phase === 'call_booked') && (
+                          <p className={cn(
+                            'mt-2 text-xs',
+                            chase.phase === 'escalate' ? 'text-red-700' : 'text-amber-800'
+                          )}>
+                            {chase.detail}
+                          </p>
+                        )}
                         <div className="mt-3 flex items-center gap-1">
                           {STEPS.map((s, i) => {
-                            const st = project.steps[i].status
+                            const st = project.steps[i]?.status || 'pending'
                             return (
                               <div key={s.id} title={`Step ${i + 1}: ${s.label}`} className={cn(
                                 'h-1.5 flex-1 rounded-full transition-colors',
@@ -850,9 +988,10 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
 
 // ── Pipeline view ──────────────────────────────────────────────────────────
 
-function PipelineView({ project, onBack, onStepAction, onDelete, onUpdateDate, onUpdateJoelContext, stepLoading, stepError, streamingDrafts }) {
-  const status = overallStatus(project)
+function PipelineView({ project, onBack, onStepAction, onDelete, onUpdateDate, onUpdateJoelContext, stepLoading, stepError, streamingDrafts, now }) {
+  const status = overallStatus(project, now)
   const activeIdx = getActiveStepIdx(project)
+  const chase = chaseStatus(project, now)
 
   return (
     <div className="max-w-3xl">
@@ -887,7 +1026,7 @@ function PipelineView({ project, onBack, onStepAction, onDelete, onUpdateDate, o
           <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-500" />
           <div className="flex-1">
             <p className="text-sm font-medium text-amber-800">Date not confirmed</p>
-            <p className="mb-2 mt-0.5 text-xs text-amber-700">Step 3 (Zoom) and Step 6 (Brief) need a confirmed date.</p>
+            <p className="mb-2 mt-0.5 text-xs text-amber-700">Zoom, the brief, and Promote & remind all need a confirmed date.</p>
             <input
               className="w-full max-w-xs rounded-md border border-amber-300 bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-amber-400"
               placeholder="e.g. 28 Aug, 12pm AEST"
@@ -897,6 +1036,10 @@ function PipelineView({ project, onBack, onStepAction, onDelete, onUpdateDate, o
         </div>
       )}
 
+      {chase && (
+        <ChaseBanner chase={chase} />
+      )}
+
       <div className="relative">
         <div className="absolute left-[15px] top-5 bottom-5 w-px bg-border" />
         <div className="space-y-2">
@@ -904,17 +1047,18 @@ function PipelineView({ project, onBack, onStepAction, onDelete, onUpdateDate, o
             <StepCard
               key={stepDef.id}
               stepDef={stepDef}
-              stepState={project.steps[idx]}
+              stepState={project.steps[idx] || { status: 'pending', output: null }}
               index={idx}
               isActive={idx === activeIdx}
-              isPast={project.steps[idx].status === 'completed'}
-              isBlocked={project.steps[idx].status === 'blocked'}
+              isPast={project.steps[idx]?.status === 'completed'}
+              isBlocked={project.steps[idx]?.status === 'blocked'}
               project={project}
               loading={stepLoading[idx] || false}
               error={stepError[idx] || null}
               joelContext={stepDef.isBriefStep ? project.joelContext : undefined}
               onJoelContextChange={stepDef.isBriefStep ? onUpdateJoelContext : undefined}
               streamingText={streamingDrafts?.[idx] ?? ''}
+              chase={stepDef.isGuestStep ? chase : null}
               onAction={(action) => onStepAction(project.id, idx, action)}
             />
           ))}
@@ -924,13 +1068,32 @@ function PipelineView({ project, onBack, onStepAction, onDelete, onUpdateDate, o
   )
 }
 
+function ChaseBanner({ chase }) {
+  const tone = chase.phase === 'escalate'
+    ? 'bg-red-50 text-red-800'
+    : chase.phase === 'waiting'
+      ? 'bg-[#eff5ff] text-foreground'
+      : 'bg-amber-50 text-amber-800'
+  const Icon = chase.phase === 'escalate' ? Phone : chase.phase === 'waiting' ? Clock : AlertCircle
+  return (
+    <div className={cn('mb-5 flex items-start gap-2.5 rounded-md p-3', tone)}>
+      <Icon className="mt-0.5 size-4 shrink-0" />
+      <div>
+        <p className="text-sm font-medium">{chase.label}</p>
+        <p className="mt-0.5 text-xs opacity-90">{chase.detail}</p>
+      </div>
+    </div>
+  )
+}
+
 // ── Step card ──────────────────────────────────────────────────────────────
 
-function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, project, loading, error, joelContext, onJoelContextChange, streamingText, onAction }) {
+function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, project, loading, error, joelContext, onJoelContextChange, streamingText, chase, onAction }) {
   const { IntegrationIcon } = stepDef
   const zoomOutput = stepDef.id === 'zoom' ? parseZoomOutput(stepState.output) : null
   const draftText = streamingText || stepState.output || ''
-  const streaming = loading && (stepDef.id === 'brief' || stepDef.id === 'edm')
+  const streaming = loading && ['brief', 'edm', 'promote', 'wrap'].includes(stepDef.id)
+  const skipGenerate = stepDef.isGuestStep || stepDef.isContentApproval
 
   return (
     <div className={cn(
@@ -966,6 +1129,19 @@ function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, proj
         )}
         {isActive && stepDef.note && (
           <p className="mt-1.5 text-xs text-amber-700">⚠ {stepDef.note}</p>
+        )}
+        {isActive && stepDef.placeholderSend && (
+          <p className="mt-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-800">
+            Draft only. Approving stores the template here — it does not email Jayson.
+          </p>
+        )}
+
+        {isActive && stepDef.isContentApproval && project.steps[stepIndex('brief')]?.output && (
+          <DraftOutputPanel
+            text={project.steps[stepIndex('brief')].output}
+            awaiting={false}
+            startExpanded
+          />
         )}
 
         {/* Output */}
@@ -1011,11 +1187,50 @@ function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, proj
           <div className="mt-3 flex flex-wrap gap-2">
             {stepDef.isGuestStep && (
               <>
+                {chase && (
+                  <p className="w-full text-xs text-muted-foreground">{chase.detail}</p>
+                )}
                 <Button size="sm" onClick={() => onAction('guest_confirmed')} className="gap-1.5">
-                  <ThumbsUp className="size-3.5" /> Guest confirmed
+                  <ThumbsUp className="size-3.5" /> Confirmed in Slack
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => onAction('guest_confirmed_email')} className="gap-1.5">
+                  <Mail className="size-3.5" /> Confirmed by email
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => onAction('guest_declined')} className="gap-1.5 border-red-200 text-red-600 hover:bg-red-50">
                   <ThumbsDown className="size-3.5" /> Guest declined
+                </Button>
+                {chase?.followUpDue && (
+                  <Button size="sm" variant="outline" onClick={() => onAction('followup')} className="gap-1.5">
+                    <MessageSquare className="size-3.5" /> Send 3-day Slack follow-up
+                  </Button>
+                )}
+                {(chase?.phase === 'escalate' || chase?.phase === 'call_booked') && (
+                  <>
+                    {chase.phase === 'escalate' && (
+                      <Button size="sm" variant="outline" onClick={() => onAction('escalate_ping')} className="gap-1.5">
+                        <Phone className="size-3.5" /> Ping Slack: time to call
+                      </Button>
+                    )}
+                    {!project.chase?.callBookedAt && (
+                      <Button size="sm" variant="outline" onClick={() => onAction('call_booked')} className="gap-1.5">
+                        <Phone className="size-3.5" /> Call booked
+                      </Button>
+                    )}
+                    <Button size="sm" variant="outline" onClick={() => onAction('restart_guest')} className="gap-1.5">
+                      <RefreshCw className="size-3.5" /> Find a new guest
+                    </Button>
+                  </>
+                )}
+              </>
+            )}
+
+            {stepDef.isContentApproval && stepState.status === 'in_progress' && !loading && (
+              <>
+                <Button size="sm" onClick={() => onAction('speaker_approved')} className="gap-1.5">
+                  <CheckCircle className="size-3.5" /> Speaker approved
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => onAction('speaker_revise')}>
+                  Speaker requested changes
                 </Button>
               </>
             )}
@@ -1027,7 +1242,7 @@ function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, proj
               </>
             )}
 
-            {stepState.status === 'in_progress' && !stepDef.isGuestStep && !loading && (
+            {stepState.status === 'in_progress' && !skipGenerate && !loading && (
               <Button size="sm" onClick={() => onAction(stepDef.needsApproval ? 'generate' : 'send')}>
                 {stepDef.actionLabel}
               </Button>
@@ -1038,8 +1253,10 @@ function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, proj
                 <Loader2 className="size-3.5 animate-spin" />
                 {stepDef.id === 'brief' ? 'Generating brief with Claude… first lines should appear shortly.' :
                  stepDef.id === 'edm' ? 'Generating EDM variants with Claude…' :
+                 stepDef.id === 'promote' ? 'Generating campaign pack with Claude…' :
+                 stepDef.id === 'wrap' ? 'Drafting follow-up and repurposing ideas…' :
                  stepDef.id === 'zoom' ? 'Creating Zoom webinar…' :
-                 stepDef.id === 'chase' ? 'Sending Slack ping…' : 'Working…'}
+                 stepDef.id === 'chase' || stepDef.id === 'guest-response' ? 'Sending Slack ping…' : 'Working…'}
               </div>
             )}
           </div>

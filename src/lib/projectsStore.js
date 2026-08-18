@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import { WEBINAR_STEPS, stepIndex } from './webinarSteps.js'
+import { WEBINAR_STEPS, activeStepIndex, chaseStatus, emptyChase, stepIndex } from './webinarSteps.js'
 
 const STORAGE_KEY = 'vygo-webinar-projects'
 
@@ -64,9 +64,38 @@ function defaultBoard(project) {
   }
 }
 
+function padWebinarSteps(project) {
+  if (project.kind !== 'webinar' || !Array.isArray(project.steps)) return project
+  const steps = project.steps.map(s => ({ ...s }))
+  const oldLen = steps.length
+  while (steps.length < WEBINAR_STEPS.length) {
+    steps.push({ status: 'pending', output: null })
+  }
+  if (oldLen > 0 && oldLen < WEBINAR_STEPS.length) {
+    const priorDone = steps.slice(0, oldLen).every(s => s.status === 'completed')
+    if (priorDone && steps[oldLen].status === 'pending') {
+      steps[oldLen].status = 'in_progress'
+    }
+  }
+  return { ...project, steps }
+}
+
+function syncWebinarBoard(project) {
+  if (project.kind !== 'webinar' || !project.board?.lists) return project
+  const lists = project.board.lists.map(l => ({ ...l, tasks: [...l.tasks] }))
+  const delivery = lists.find(l => l.id === 'delivery')
+  if (delivery) {
+    const have = new Set(delivery.tasks.map(t => t.stepId).filter(Boolean))
+    for (const step of WEBINAR_STEPS) {
+      if (!have.has(step.id)) delivery.tasks.push(makeTask(step.label, { stepId: step.id }))
+    }
+  }
+  return { ...project, board: { lists } }
+}
+
 // Fills in fields added after a project was first written to localStorage.
 function normalize(project) {
-  const next = { ...project }
+  let next = { ...project }
   if (!next.kind) next.kind = Array.isArray(next.steps) ? 'webinar' : 'general'
   if (!next.board || !Array.isArray(next.board.lists) || next.board.lists.length === 0) {
     next.board = defaultBoard(next)
@@ -74,6 +103,9 @@ function normalize(project) {
   if (!Array.isArray(next.activity)) {
     next.activity = [makeActivity('Project created', 'created', next.createdAt)]
   }
+  if (next.kind === 'webinar' && !next.chase) next.chase = emptyChase()
+  next = padWebinarSteps(next)
+  next = syncWebinarBoard(next)
   return next
 }
 
@@ -224,10 +256,14 @@ export function projectStatus(project) {
       : { label: 'Webinar delivered', tone: 'violet' }
   }
 
-  const activeIdx = project.steps.findIndex(s => s.status !== 'completed')
+  const activeIdx = activeStepIndex(project)
   const active = project.steps[activeIdx]
   if (active?.status === 'blocked') return { label: 'Blocked', tone: 'red' }
+  const chase = chaseStatus(project)
+  if (chase?.phase === 'escalate') return { label: chase.label, tone: 'red' }
+  if (chase?.phase === 'no_reply' || chase?.phase === 'call_booked') return { label: chase.label, tone: 'amber' }
   if (active?.status === 'waiting_approval') return { label: 'Needs approval', tone: 'amber' }
+  if (chase) return { label: chase.label, tone: chase.tone }
   return { label: `Step ${activeIdx + 1} of ${project.steps.length}`, tone: 'blue' }
 }
 

@@ -1,5 +1,5 @@
 import {
-  FileText, FolderKanban, Globe, LayoutGrid, Mail, Megaphone, Mic2, Share2, Sparkles, Video,
+  BookOpen, FileText, FolderKanban, Globe, LayoutGrid, Mail, Megaphone, Mic2, Share2, Video,
 } from 'lucide-react'
 
 export const WORKSPACE = [
@@ -22,8 +22,8 @@ export const DASHBOARDS = [
 ]
 
 export const TOOLS = [
-  { id: 'tool-webinar', label: 'Webinar brief', icon: Sparkles },
   { id: 'tool-podcast', label: 'Podcast repurposer', icon: Mic2 },
+  { id: 'tool-skills', label: 'Skills', icon: BookOpen },
 ]
 
 export const PAGE_META = {
@@ -41,23 +41,23 @@ export const PAGE_META = {
   pages: { section: 'Metrics & Analytics', crumb: 'Landing pages', title: 'Landing pages' },
   webinar: { section: 'Metrics & Analytics', crumb: 'Webinars', title: 'Webinars' },
   podcast: { section: 'Metrics & Analytics', crumb: 'Podcasts', title: 'Podcasts' },
-  'tool-webinar': {
-    section: 'Tools',
-    crumb: 'Webinar brief',
-    title: 'Webinar campaign builder',
-    description: 'Turn a topic and speaker details into ready-to-use marketing assets.',
-  },
   'tool-podcast': {
     section: 'Tools',
     crumb: 'Podcast repurposer',
     title: 'Podcast repurposer',
     description: 'Extract one sharp idea from a transcript for LinkedIn and Spotify.',
   },
+  'tool-skills': {
+    section: 'Tools',
+    crumb: 'Skills',
+    title: 'Marketing skills library',
+    description: 'Voice profiles and playbooks the team can copy into an email, or reuse as an agent skill in Cursor/Claude.',
+  },
   'system-webinars': {
     section: 'Systems',
     crumb: 'Webinars',
     title: 'Webinar projects',
-    description: 'Track every webinar from first meeting to go-live.',
+    description: 'Track every webinar from first meeting through guest chase, speaker sign-off, promo, and wrap.',
   },
 }
 

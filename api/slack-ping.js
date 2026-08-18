@@ -1,4 +1,4 @@
-// POST { projectId, projectTitle, speaker, date, followUp? }
+// POST { projectId, projectTitle, speaker, date, followUp?, escalate? }
 // Sends a Slack message via SLACK_WEBHOOK_URL.
 // Also records the ping timestamp when a follow-up store is configured.
 // Degrades gracefully if webhook is not configured.
@@ -7,7 +7,7 @@ export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store')
   if (req.method !== 'POST') { res.setHeader('Allow', 'POST'); res.status(405).end(); return }
 
-  const { projectId, projectTitle, speaker, date, followUp = false } = req.body || {}
+  const { projectId, projectTitle, speaker, date, followUp = false, escalate = false } = req.body || {}
   if (!projectId || !projectTitle) {
     res.status(400).json({ error: 'projectId and projectTitle are required' })
     return
@@ -16,9 +16,11 @@ export default async function handler(req, res) {
   const dateSnippet = date ? `Date on file: _${date}_` : 'No date confirmed yet'
   const guestSnippet = speaker ? ` from *${speaker}*` : ''
 
-  const message = followUp
-    ? `🔔 *3-day follow-up* — the webinar *"${projectTitle}"* is still waiting on a confirmed date and guest.${guestSnippet}\n${dateSnippet}\n\nReply *"yes"* to advance the workflow, or book a quick call to sort it out.`
-    : `👋 Hey @joel — the webinar workflow for *"${projectTitle}"* is blocked on:\n• ${date ? `Confirmed date _(${date})_` : 'A confirmed date — not set yet'}\n• Guest confirmation${guestSnippet}\n\nCan you confirm or nudge them? Reply *"yes"* here and I'll kick off the next step.\n\n_Auto follow-up in 3 days if no reply. After that, a call._`
+  const message = escalate
+    ? `📞 *Time to call* — *"${projectTitle}"* still has no guest confirmation after a Slack ping and a 3-day follow-up.${guestSnippet}\n${dateSnippet}\n\nBook a call with Joel/Lyndon. If the guest declined, restart the chase with someone else.`
+    : followUp
+      ? `🔔 *3-day follow-up* — the webinar *"${projectTitle}"* is still waiting on a confirmed date and guest.${guestSnippet}\n${dateSnippet}\n\nReply *"yes"* in Slack, or mark “confirmed by email” on the webinar if they replied outside Slack. If they're still quiet in 3 days, escalate to a call.`
+      : `👋 Hey @joel — the webinar workflow for *"${projectTitle}"* is blocked on:\n• ${date ? `Confirmed date _(${date})_` : 'A confirmed date — not set yet'}\n• Guest confirmation${guestSnippet}\n\nCan you confirm or nudge them? Reply *"yes"* here, or mark it on the webinar if they reply by email.\n\n_Auto follow-up in 3 days if no reply. After that, a call._`
 
   const webhookUrl = process.env.SLACK_WEBHOOK_URL
   let slackSent = false

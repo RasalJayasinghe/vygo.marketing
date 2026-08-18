@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ArrowLeft, Calendar, CheckCircle2, Circle, Clock, ExternalLink,
   FolderKanban, ListTodo, Plus, Send, Sparkles, Trash2, User, Video, X,
@@ -10,6 +10,7 @@ import {
   makeGeneralProject, makeTask, nextTask, projectProgress, projectStatus,
   updateProject, useProjects, withActivity,
 } from '@/lib/projectsStore.js'
+import { chaseStatus } from '@/lib/webinarSteps.js'
 import { cn } from '@/lib/utils'
 
 const TONES = {
@@ -65,6 +66,15 @@ function formatRelative(iso) {
   return formatDate(iso)
 }
 
+function useNow(ms = 30000) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), ms)
+    return () => clearInterval(id)
+  }, [ms])
+  return now
+}
+
 // ── Task mutations ─────────────────────────────────────────────────────────
 
 function mapList(project, listId, fn) {
@@ -101,6 +111,7 @@ function removeTask(projectId, listId, taskId) {
 
 export default function ProjectsBoard({ onOpenWorkflow }) {
   const projects = useProjects()
+  useNow()
   const [selectedId, setSelectedId] = useState(null)
   const [filter, setFilter] = useState('all')
   const [showNew, setShowNew] = useState(false)
@@ -254,6 +265,7 @@ function ProjectCard({ project, onOpen }) {
   const status = projectStatus(project)
   const { done, total, pct } = projectProgress(project)
   const upNext = nextTask(project)
+  const chase = chaseStatus(project)
 
   return (
     <Card className="group cursor-pointer transition-shadow hover:shadow-sm" onClick={onOpen}>
@@ -289,6 +301,14 @@ function ProjectCard({ project, onOpen }) {
                 </span>
               )}
             </div>
+            {chase && (chase.phase === 'no_reply' || chase.phase === 'escalate' || chase.phase === 'call_booked') && (
+              <p className={cn(
+                'mt-2 text-xs',
+                chase.phase === 'escalate' ? 'text-red-700' : 'text-amber-800'
+              )}>
+                {chase.detail}
+              </p>
+            )}
 
             <div className="mt-3 flex items-center gap-2.5">
               <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-border">

@@ -76,6 +76,7 @@ function prepareJob(body) {
     const requestedAssets = Array.isArray(assets)
       ? assets.slice(0, 12).map(asset => cleanText(asset, 100)).filter(Boolean)
       : []
+    const assetCount = requestedAssets.length || 3
     return {
       system: webinarPrompt(),
       userMessage: [
@@ -83,13 +84,13 @@ function prepareJob(body) {
         speaker ? `Speaker(s): ${cleanText(speaker, 500)}` : null,
         audience ? `Audience: ${cleanText(audience, 500)}` : null,
         date ? `Date/format: ${cleanText(date, 300)}` : null,
-        notes ? `Notes: ${cleanText(notes)}` : null,
+        notes ? `Notes: ${cleanText(notes, 12_000)}` : null,
         requestedAssets.length
           ? `Assets requested: ${requestedAssets.join(', ')}`
           : 'Assets requested: Title + alternatives, Short description, LinkedIn launch post',
         'Keep each asset tight and ready to paste. Prefer shorter drafts over covering every possible angle.',
       ].filter(Boolean).join('\n'),
-      maxTokens: 4096,
+      maxTokens: Math.min(8192, 2048 + assetCount * 900),
     }
   }
 

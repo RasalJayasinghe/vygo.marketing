@@ -52,6 +52,13 @@ export default async function handler(req, res) {
           })
       }
 
+      try {
+        const { syncFollowups } = await import('./followups.js')
+        await syncFollowups(incoming)
+      } catch (err) {
+        console.error('Follow-up sync failed', err)
+      }
+
       res.status(200).json({ ok: true, count: incoming.length })
       return
     }

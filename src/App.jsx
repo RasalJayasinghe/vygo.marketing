@@ -13,8 +13,8 @@ const Forms = lazy(() => import('./tabs/Forms.jsx'))
 const LandingPages = lazy(() => import('./tabs/LandingPages.jsx'))
 const Webinars = lazy(() => import('./tabs/Webinars.jsx'))
 const Podcasts = lazy(() => import('./tabs/Podcasts.jsx'))
-const WebinarBrief = lazy(() => import('./tools/WebinarBrief.jsx'))
 const PodcastRepurposer = lazy(() => import('./tools/PodcastRepurposer.jsx'))
+const Skills = lazy(() => import('./tools/Skills.jsx'))
 const WebinarWorkflow = lazy(() => import('./systems/WebinarWorkflow.jsx'))
 const ProjectsBoard = lazy(() => import('./projects/ProjectsBoard.jsx'))
 
@@ -70,8 +70,8 @@ export default function App() {
       )}
 
       <Suspense fallback={<div className="py-16 text-center text-sm text-muted-foreground">Loading…</div>}>
-        {tab === 'tool-webinar' && <WebinarBrief />}
         {tab === 'tool-podcast' && <PodcastRepurposer />}
+        {tab === 'tool-skills' && <Skills />}
         {tab === 'projects' && <ProjectsBoard onOpenWorkflow={openWorkflow} />}
         {tab === 'system-webinars' && (
           <WebinarWorkflow

@@ -59,7 +59,7 @@ npm run db:migrate     # apply to the local dev database only
 
 Hosted (preview/production) migrations run on deploy. Do not run `drizzle-kit push` or migrate against the live connection string.
 
-The first successful save uploads any existing browser `localStorage` projects. Slack chase pings write a follow-up row; the daily cron (`cron-followup`) re-pings after 3 days.
+The first successful save uploads any existing browser `localStorage` projects. Slack chase pings write a follow-up row and start a 3-day no-reply timer on the webinar itself (visible in Systems and Projects even if Slack is not configured). The daily cron (`cron-followup`) re-pings after 3 days, then escalates to a call after a second quiet window. Confirmations by email are marked by hand — the workflow does not read inboxes.
 
 ## Production build
 
