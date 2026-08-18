@@ -118,6 +118,26 @@ function overallStatus(project) {
   return { label: `Step ${idx + 1} of ${STEPS.length}`, color: 'text-blue-600 bg-blue-50 border-blue-200' }
 }
 
+async function parseApiJson(res) {
+  const text = await res.text()
+  if (!text) return {}
+  try {
+    return JSON.parse(text)
+  } catch {
+    return { error: text.slice(0, 180).replace(/\s+/g, ' ') }
+  }
+}
+
+function apiErrorMessage(data, status, fallback) {
+  return data?.error || data?.errorMessage || data?.message || fallback || `Request failed (${status})`
+}
+
+const EXTRACT_STAGES = [
+  'Reading the transcript',
+  'Pulling topic, speaker, and date',
+  'Checking whether a date was confirmed',
+]
+
 const EMPTY_FORM = { title: '', speaker: '', date: '', notes: '' }
 
 // ── Main component ─────────────────────────────────────────────────────────
@@ -130,7 +150,9 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
   const [dragging, setDragging] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
   const [transcript, setTranscript] = useState('')
+  const [pasteText, setPasteText] = useState('')
   const [extractLoading, setExtractLoading] = useState(false)
+  const [extractStage, setExtractStage] = useState(0)
   const [extractedDate, setExtractedDate] = useState(null)
   const [joelAction, setJoelAction] = useState('')
   const [listening, setListening] = useState(false)
@@ -165,50 +187,71 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
 
   // ── Transcript processing ──
   const processTranscript = useCallback(async (text) => {
-    setTranscript(text)
-    setNewStep('details')
+    const trimmed = text.trim()
+    if (!trimmed) return
+    setTranscript(trimmed)
+    setPasteText(trimmed)
     setExtractLoading(true)
+    setExtractStage(0)
     setJoelAction('')
     setExtractedDate(null)
 
-    try {
-      const res = await fetch('/api/extract-webinar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcript: text }),
-      })
-      if (res.ok) {
-        const data = await res.json()
-        setExtractedDate(data.dateConfirmed ? data.date : null)
-        setJoelAction(data.joelAction || '')
-        setForm({ title: data.title || '', speaker: data.speaker || '', date: data.date || '', notes: data.notes || '' })
-        setExtractLoading(false)
-        return
-      }
-    } catch { /* fall through to regex */ }
+    const timers = [
+      setTimeout(() => setExtractStage(1), 500),
+      setTimeout(() => setExtractStage(2), 1600),
+    ]
 
-    const fallback = regexExtract(text)
-    setExtractedDate(fallback.dateConfirmed ? fallback.date : null)
-    setForm({ title: fallback.title, speaker: fallback.speaker, date: fallback.date, notes: '' })
-    setExtractLoading(false)
+    try {
+      try {
+        const res = await fetch('/api/extract-webinar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transcript: trimmed }),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          setExtractedDate(data.dateConfirmed ? data.date : null)
+          setJoelAction(data.joelAction || '')
+          setForm({ title: data.title || '', speaker: data.speaker || '', date: data.date || '', notes: data.notes || '' })
+          setNewStep('details')
+          return
+        }
+      } catch { /* fall through to regex */ }
+
+      const fallback = regexExtract(trimmed)
+      setExtractedDate(fallback.dateConfirmed ? fallback.date : null)
+      setForm({ title: fallback.title, speaker: fallback.speaker, date: fallback.date, notes: '' })
+      setNewStep('details')
+    } finally {
+      timers.forEach(clearTimeout)
+    }
   }, [])
+
+  const processTranscriptAndSettle = useCallback(async (text) => {
+    try {
+      await processTranscript(text)
+    } finally {
+      setExtractLoading(false)
+      setExtractStage(0)
+    }
+  }, [processTranscript])
 
   const handleDrop = useCallback((e) => {
     e.preventDefault(); setDragging(false)
     const file = e.dataTransfer.files[0]
     if (!file) return
     const reader = new FileReader()
-    reader.onload = ev => processTranscript(ev.target.result)
+    reader.onload = ev => processTranscriptAndSettle(ev.target.result)
     reader.readAsText(file)
-  }, [processTranscript])
+  }, [processTranscriptAndSettle])
 
   const handleFileChange = useCallback((e) => {
     const file = e.target.files[0]
     if (!file) return
     const reader = new FileReader()
-    reader.onload = ev => processTranscript(ev.target.result)
+    reader.onload = ev => processTranscriptAndSettle(ev.target.result)
     reader.readAsText(file)
-  }, [processTranscript])
+  }, [processTranscriptAndSettle])
 
   // ── Voice input ──
   const startVoice = useCallback(() => {
@@ -233,8 +276,8 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
 
   const resetNew = () => {
     setShowNew(false); setNewStep('drop'); setForm(EMPTY_FORM)
-    setTranscript(''); setExtractedDate(null); setJoelAction('')
-    setExtractLoading(false); setListening(false); recognitionRef.current?.stop()
+    setTranscript(''); setPasteText(''); setExtractedDate(null); setJoelAction('')
+    setExtractLoading(false); setExtractStage(0); setListening(false); recognitionRef.current?.stop()
   }
 
   // ── Pipeline step actions ──
@@ -267,13 +310,13 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title: project.title, date: project.date, speaker: project.speaker }),
         })
-        const data = await res.json()
+        const data = await parseApiJson(res)
         if (res.status === 503) {
           // Graceful degradation — Zoom not configured
-          const placeholder = `Webinar: ${project.title}\nDate: ${project.date || 'TBC — confirm date before creating webinar'}\nHost link:  zoom.us/w/9xx-xxx-xxx?role=host\nGuest link 1: zoom.us/w/9xx-xxx-xxx?tk=guest1\nGuest link 2: zoom.us/w/9xx-xxx-xxx?tk=guest2\nGuest link 3: zoom.us/w/9xx-xxx-xxx?tk=guest3\n\n⚠ Zoom API not configured — placeholder links shown.\n${data.setup}`
+          const placeholder = `Webinar: ${project.title}\nDate: ${project.date || 'TBC — confirm date before creating webinar'}\nHost link:  zoom.us/w/9xx-xxx-xxx?role=host\nGuest link 1: zoom.us/w/9xx-xxx-xxx?tk=guest1\nGuest link 2: zoom.us/w/9xx-xxx-xxx?tk=guest2\nGuest link 3: zoom.us/w/9xx-xxx-xxx?tk=guest3\n\n⚠ Zoom API not configured — placeholder links shown.\n${data.setup || ''}`
           advanceStep(placeholder, true)
         } else if (!res.ok) {
-          throw new Error(data.error || 'Zoom API error')
+          throw new Error(apiErrorMessage(data, res.status, 'Zoom API error'))
         } else {
           const output = [
             `Webinar: ${data.topic}`,
@@ -509,7 +552,7 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
                 <div className="flex items-center gap-2.5">
                   <p id="new-webinar-title" className="text-base font-semibold">New webinar</p>
                   <span className="rounded-full bg-[#eff5ff] px-2.5 py-0.5 text-[11px] font-medium text-brand">
-                    {newStep === 'drop' ? 'Step 1 of 2' : 'Step 2 of 2'}
+                    {extractLoading ? 'Extracting…' : newStep === 'drop' ? 'Step 1 of 2' : 'Step 2 of 2'}
                   </span>
                 </div>
                 <button type="button" onClick={resetNew} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground">
@@ -517,15 +560,44 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
                 </button>
               </div>
 
-            {newStep === 'drop' && (
-              <div className="space-y-3">
+            {newStep === 'drop' && extractLoading && (
+              <div className="flex flex-col items-center justify-center gap-5 rounded-xl border border-[#c7dcff] bg-[#f8fbff] px-6 py-12">
+                <Loader2 className="size-7 animate-spin text-brand" />
+                <div className="w-full max-w-sm space-y-3">
+                  <p className="text-center text-sm font-semibold text-foreground">Extracting webinar details</p>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-[#dbe8ff]">
+                    <div
+                      className="h-full rounded-full bg-brand transition-all duration-500"
+                      style={{ width: `${((extractStage + 1) / EXTRACT_STAGES.length) * 100}%` }}
+                    />
+                  </div>
+                  <ul className="space-y-2">
+                    {EXTRACT_STAGES.map((label, i) => (
+                      <li key={label} className="flex items-center gap-2 text-sm">
+                        {i < extractStage ? (
+                          <CheckCircle className="size-4 text-green-600" />
+                        ) : i === extractStage ? (
+                          <Loader2 className="size-4 animate-spin text-brand" />
+                        ) : (
+                          <Clock className="size-4 text-muted-foreground/50" />
+                        )}
+                        <span className={i <= extractStage ? 'text-foreground' : 'text-muted-foreground'}>{label}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            {newStep === 'drop' && !extractLoading && (
+              <div className="flex min-h-0 flex-1 flex-col space-y-3">
                 <div
                   onDragOver={e => { e.preventDefault(); setDragging(true) }}
                   onDragLeave={() => setDragging(false)}
                   onDrop={handleDrop}
                   onClick={() => fileInputRef.current?.click()}
                   className={cn(
-                    'flex min-h-[240px] cursor-pointer flex-col items-center justify-center gap-4 rounded-xl border-2 border-dashed px-6 transition-all sm:min-h-[300px]',
+                    'flex min-h-[160px] cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 transition-all sm:min-h-[200px]',
                     dragging
                       ? 'border-brand bg-[#eff5ff] shadow-inner'
                       : 'border-[#c7dcff] bg-[#f8fbff] hover:border-brand/60 hover:bg-[#e8f1ff]'
@@ -540,7 +612,6 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
                   <div className="text-center">
                     <p className="text-sm font-semibold text-foreground">Drop your Joel/Lyndon meeting transcript</p>
                     <p className="mt-1 text-xs text-muted-foreground">.txt or .md · Claude will extract topic, speaker, and date</p>
-                    <p className="mt-2.5 text-[11px] text-muted-foreground/70">→ Starts the 6-step webinar workflow automatically</p>
                   </div>
                   <input ref={fileInputRef} type="file" accept=".txt,.md" className="hidden" onChange={handleFileChange} />
                 </div>
@@ -549,11 +620,33 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
                   <span className="relative mx-auto flex w-fit bg-white px-3 text-[11px] text-muted-foreground">or paste transcript text</span>
                 </div>
                 <textarea
-                  className="w-full rounded-md border border-border bg-muted/30 px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-brand"
+                  className="min-h-[160px] w-full flex-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-brand"
                   rows={8}
+                  value={pasteText}
+                  onChange={e => setPasteText(e.target.value)}
+                  onKeyDown={e => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && pasteText.trim().length >= 30) {
+                      e.preventDefault()
+                      processTranscriptAndSettle(pasteText)
+                    }
+                  }}
                   placeholder="Paste meeting notes here…"
-                  onBlur={e => { if (e.target.value.trim().length > 30) processTranscript(e.target.value) }}
                 />
+                <div className="flex items-center justify-between gap-3 pt-1">
+                  <p className="text-[11px] text-muted-foreground">
+                    {pasteText.trim().length < 30
+                      ? 'Paste the notes, then extract — or drop a file above.'
+                      : `${pasteText.trim().length.toLocaleString()} characters · ⌘ Enter`}
+                  </p>
+                  <Button
+                    size="sm"
+                    disabled={pasteText.trim().length < 30}
+                    onClick={() => processTranscriptAndSettle(pasteText)}
+                  >
+                    <Sparkles className="mr-1.5 size-3.5" />
+                    Extract details
+                  </Button>
+                </div>
               </div>
             )}
 

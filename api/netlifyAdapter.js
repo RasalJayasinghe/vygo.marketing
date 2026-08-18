@@ -1,18 +1,27 @@
+// Adapts the Express-style handlers in /api to Netlify Functions v2
+// (export default, Web Request / Response). v2 is required for local
+// `netlify dev` because v1 is executed via lambda-local as CommonJS.
+
 export function toNetlify(fn) {
-  return async (event) => {
-    const headers = event.headers || {}
-    const query = event.queryStringParameters || {}
+  return async (request) => {
+    const headers = Object.fromEntries(request.headers.entries())
+    const url = new URL(request.url)
+    const query = Object.fromEntries(url.searchParams.entries())
+
     let body = {}
-    if (event.body) {
-      try {
-        body = JSON.parse(event.body)
-      } catch {
-        body = {}
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      const text = await request.text()
+      if (text) {
+        try {
+          body = JSON.parse(text)
+        } catch {
+          body = {}
+        }
       }
     }
 
     const req = {
-      method: event.httpMethod || 'GET',
+      method: request.method,
       query,
       body,
       headers,
@@ -46,6 +55,6 @@ export function toNetlify(fn) {
     }
 
     await fn(req, res)
-    return { statusCode, headers: resHeaders, body: payload }
+    return new Response(payload, { status: statusCode, headers: resHeaders })
   }
 }
