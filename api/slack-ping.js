@@ -22,6 +22,7 @@ export default async function handler(req, res) {
 
   const webhookUrl = process.env.SLACK_WEBHOOK_URL
   let slackSent = false
+  let queued = false
 
   if (webhookUrl) {
     try {
@@ -36,7 +37,13 @@ export default async function handler(req, res) {
     }
   }
 
-  // Follow-up queue is optional; Slack ping still works without it.
+  try {
+    const { upsertFollowup } = await import('./followups.js')
+    await upsertFollowup({ projectId, projectTitle, speaker, date })
+    queued = true
+  } catch (err) {
+    console.error('Follow-up queue write failed', err)
+  }
 
-  res.status(200).json({ ok: true, slackSent, preview: message })
+  res.status(200).json({ ok: true, slackSent, queued, preview: message })
 }

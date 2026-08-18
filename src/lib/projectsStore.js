@@ -77,7 +77,8 @@ function normalize(project) {
   return next
 }
 
-let projects = read()
+let projects = typeof window !== 'undefined' ? read() : []
+let persistTimer
 const listeners = new Set()
 
 function read() {
@@ -106,12 +107,52 @@ if (typeof window !== 'undefined') {
   })
 }
 
+function writeLocal(list) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(list))
+  } catch { /* quota or private mode — keep the in-memory copy */ }
+}
+
+function persistRemote(list) {
+  clearTimeout(persistTimer)
+  persistTimer = setTimeout(() => {
+    fetch('/api/projects', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projects: list }),
+    }).catch(() => { /* keep local cache if Netlify Database is not up yet */ })
+  }, 400)
+}
+
+async function hydrateFromDatabase() {
+  try {
+    const res = await fetch('/api/projects', { cache: 'no-store' })
+    if (!res.ok) return
+    const data = await res.json()
+    const remote = Array.isArray(data.projects) ? data.projects.map(normalize) : []
+    if (remote.length) {
+      projects = remote
+      writeLocal(projects)
+      emit()
+      return
+    }
+    if (projects.length) {
+      persistRemote(projects)
+    }
+  } catch {
+    /* Vite-only local dev has no functions; localStorage stays the source. */
+  }
+}
+
+if (typeof window !== 'undefined') {
+  hydrateFromDatabase()
+}
+
 export function setProjects(next) {
   const value = typeof next === 'function' ? next(projects) : next
   projects = value.map(normalize)
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(projects))
-  } catch { /* quota or private mode — keep the in-memory copy */ }
+  writeLocal(projects)
+  persistRemote(projects)
   emit()
 }
 

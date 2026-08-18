@@ -109,7 +109,7 @@ export default function AppShell({
 
             {visibleDashboards.length > 0 && (
               <>
-                <p className="mt-4 mb-1 px-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Dashboards</p>
+                <p className="mt-4 mb-1 px-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Metrics & Analytics</p>
                 {visibleDashboards.map(item => (
                   <NavItem
                     key={item.id}

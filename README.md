@@ -37,11 +37,29 @@ npm install
 npm run dev
 ```
 
-Copy `.env.example` to `.env.local` and fill in keys. `npm run dev` proxies HubSpot locally. To run Netlify Functions (briefs, Zoom, Slack) as well:
+Copy `.env.example` to `.env.local` and fill in keys. `npm run dev` proxies HubSpot locally. To run Netlify Functions (briefs, Zoom, Slack, project storage) as well:
 
 ```bash
+npx netlify database migrations apply   # first time, local Postgres only
 npx netlify dev
 ```
+
+`npm run dev` still works without a database — webinar projects stay in the browser until Functions + Netlify Database are available.
+
+## Project storage (Netlify Database)
+
+Webinar and general projects persist in **Netlify Database** (managed Postgres on Netlify, not a separate Neon account). Installing `@netlify/database` provisions it on deploy. `NETLIFY_DB_URL` is set automatically — do not paste it into `.env`.
+
+Schema lives in `db/schema.js`. After changing it:
+
+```bash
+npm run db:generate    # writes netlify/database/migrations/
+npm run db:migrate     # apply to the local dev database only
+```
+
+Hosted (preview/production) migrations run on deploy. Do not run `drizzle-kit push` or migrate against the live connection string.
+
+The first successful save uploads any existing browser `localStorage` projects. Slack chase pings write a follow-up row; the daily cron (`cron-followup`) re-pings after 3 days.
 
 ## Production build
 
@@ -62,7 +80,7 @@ git push -u origin main
 1. Open [Netlify](https://app.netlify.com/) → **Add new site** → **Import an existing project**.
 2. Select the GitHub repo `rasaljayasingheatvygo/marketingdashboard`.
 3. Build settings are in `netlify.toml` (`npm run build`, publish `dist`).
-4. Add environment variables (`HUBSPOT_TOKEN`, `VITE_HUBSPOT_ENABLED`, `ANTHROPIC_API_KEY`, and optional Slack/Zoom keys), then deploy.
+4. Add environment variables (`HUBSPOT_TOKEN`, `VITE_HUBSPOT_ENABLED`, `ANTHROPIC_API_KEY`, and optional Slack/Zoom keys), then deploy. Project storage does not need extra env vars once `@netlify/database` is in the repo.
 
 Pushes to `main` trigger production deploys automatically.
 
