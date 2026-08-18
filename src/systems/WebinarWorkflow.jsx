@@ -215,6 +215,7 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
   const [listening, setListening] = useState(false)
   const [stepLoading, setStepLoading] = useState({})
   const [stepError, setStepError] = useState({})
+  const [streamingDrafts, setStreamingDrafts] = useState({})
   const recognitionRef = useRef(null)
   const fileInputRef = useRef(null)
 
@@ -410,6 +411,7 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
     // Claude EDM variants
     if (stepDef.id === 'edm' && (action === 'generate' || action === 'send')) {
       setLoading(true); setError(null)
+      setStreamingDrafts(d => ({ ...d, [stepIdx]: '' }))
       try {
         const notesLines = [
           project.notes,
@@ -421,17 +423,27 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
           speaker: project.speaker,
           date: project.date,
           notes: notesLines,
+        }, {
+          onChunk: (partial) => setStreamingDrafts(d => ({ ...d, [stepIdx]: partial })),
         })
         advanceStep(text, true)
       } catch (err) {
         setError(err.message)
-      } finally { setLoading(false) }
+      } finally {
+        setLoading(false)
+        setStreamingDrafts(d => {
+          const next = { ...d }
+          delete next[stepIdx]
+          return next
+        })
+      }
       return
     }
 
     // Claude brief
     if (stepDef.id === 'brief' && (action === 'generate' || action === 'send')) {
       setLoading(true); setError(null)
+      setStreamingDrafts(d => ({ ...d, [stepIdx]: '' }))
       try {
         const notesLines = [project.notes, project.joelContext ? `Joel 1:1 context:\n${project.joelContext}` : ''].filter(Boolean).join('\n\n')
         const text = await callBrief({
@@ -445,11 +457,20 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
             'LinkedIn launch post', 'Speaker announcement post',
             'Speaker Q&A', 'Repurposing ideas',
           ],
+        }, {
+          onChunk: (partial) => setStreamingDrafts(d => ({ ...d, [stepIdx]: partial })),
         })
         advanceStep(text, false)
       } catch (err) {
         setError(err.message)
-      } finally { setLoading(false) }
+      } finally {
+        setLoading(false)
+        setStreamingDrafts(d => {
+          const next = { ...d }
+          delete next[stepIdx]
+          return next
+        })
+      }
       return
     }
 
@@ -510,6 +531,7 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
         onUpdateJoelContext={(val) => handleUpdateJoelContext(selectedProject.id, val)}
         stepLoading={stepLoading}
         stepError={stepError}
+        streamingDrafts={streamingDrafts}
       />
     )
   }
@@ -828,7 +850,7 @@ export default function WebinarWorkflow({ initialProjectId = null, onConsumeInit
 
 // ── Pipeline view ──────────────────────────────────────────────────────────
 
-function PipelineView({ project, onBack, onStepAction, onDelete, onUpdateDate, onUpdateJoelContext, stepLoading, stepError }) {
+function PipelineView({ project, onBack, onStepAction, onDelete, onUpdateDate, onUpdateJoelContext, stepLoading, stepError, streamingDrafts }) {
   const status = overallStatus(project)
   const activeIdx = getActiveStepIdx(project)
 
@@ -892,6 +914,7 @@ function PipelineView({ project, onBack, onStepAction, onDelete, onUpdateDate, o
               error={stepError[idx] || null}
               joelContext={stepDef.isBriefStep ? project.joelContext : undefined}
               onJoelContextChange={stepDef.isBriefStep ? onUpdateJoelContext : undefined}
+              streamingText={streamingDrafts?.[idx] ?? ''}
               onAction={(action) => onStepAction(project.id, idx, action)}
             />
           ))}
@@ -903,15 +926,17 @@ function PipelineView({ project, onBack, onStepAction, onDelete, onUpdateDate, o
 
 // ── Step card ──────────────────────────────────────────────────────────────
 
-function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, project, loading, error, joelContext, onJoelContextChange, onAction }) {
+function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, project, loading, error, joelContext, onJoelContextChange, streamingText, onAction }) {
   const { IntegrationIcon } = stepDef
   const zoomOutput = stepDef.id === 'zoom' ? parseZoomOutput(stepState.output) : null
+  const draftText = streamingText || stepState.output || ''
+  const streaming = loading && (stepDef.id === 'brief' || stepDef.id === 'edm')
 
   return (
     <div className={cn(
       'flex gap-4 overflow-hidden rounded-lg p-4 transition-all',
       isActive && 'bg-white shadow-sm ring-1 ring-border',
-      isPast && 'opacity-55',
+      isPast && 'bg-white/60',
       !isActive && !isPast && !isBlocked && 'opacity-35'
     )}>
       {/* Step indicator */}
@@ -927,7 +952,7 @@ function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, proj
 
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <p className={cn('text-sm font-semibold', isPast && 'line-through decoration-muted-foreground/50')}>{stepDef.label}</p>
+          <p className="text-sm font-semibold">{stepDef.label}</p>
           {stepDef.integration && (
             <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
               {IntegrationIcon && <IntegrationIcon className="size-3" />}
@@ -936,7 +961,7 @@ function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, proj
           )}
         </div>
 
-        {(isActive || isBlocked) && (
+        {(isActive || isBlocked || isPast) && (
           <p className="mt-1 text-xs text-muted-foreground">{stepDef.description}</p>
         )}
         {isActive && stepDef.note && (
@@ -944,19 +969,19 @@ function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, proj
         )}
 
         {/* Output */}
-        {stepState.output && (isActive || isPast) && (
+        {(draftText || streaming) && (isActive || isPast) && (
           zoomOutput ? (
             <ZoomLinksPanel
               parsed={zoomOutput}
               awaiting={stepState.status === 'waiting_approval'}
             />
           ) : (
-            <pre className={cn(
-              'mt-3 max-w-full overflow-hidden whitespace-pre-wrap break-all rounded-md p-3 font-mono text-[11px] leading-relaxed',
-              stepState.status === 'waiting_approval' ? 'bg-amber-50 text-amber-900' : 'bg-muted text-muted-foreground'
-            )}>
-              {stepState.output}
-            </pre>
+            <DraftOutputPanel
+              text={draftText}
+              streaming={streaming}
+              awaiting={stepState.status === 'waiting_approval'}
+              startExpanded={isActive || streaming}
+            />
           )
         )}
 
@@ -1029,6 +1054,75 @@ function StepCard({ stepDef, stepState, index, isActive, isPast, isBlocked, proj
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function DraftOutputPanel({ text, streaming, awaiting, startExpanded = false }) {
+  const [copied, setCopied] = useState(false)
+  const [expanded, setExpanded] = useState(startExpanded)
+  const scrollerRef = useRef(null)
+
+  useEffect(() => {
+    if (streaming) setExpanded(true)
+  }, [streaming])
+
+  useEffect(() => {
+    if (!streaming || !scrollerRef.current) return
+    scrollerRef.current.scrollTop = scrollerRef.current.scrollHeight
+  }, [text, streaming])
+
+  const copy = async () => {
+    if (!text) return
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1600)
+    } catch { /* clipboard may be blocked */ }
+  }
+
+  if (!text && !streaming) return null
+
+  return (
+    <div className={cn(
+      'mt-3 overflow-hidden rounded-md border',
+      awaiting ? 'border-amber-200 bg-amber-50/80' : 'border-border bg-white'
+    )}>
+      <div className="flex items-center justify-between gap-2 border-b border-black/5 px-3 py-2">
+        <p className="text-[11px] font-medium text-muted-foreground">
+          {streaming ? 'Writing… copy anytime, including a partial draft' : 'Saved draft'}
+        </p>
+        <div className="flex shrink-0 items-center gap-1">
+          {!streaming && text ? (
+            <button
+              type="button"
+              onClick={() => setExpanded(open => !open)}
+              className="rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              {expanded ? 'Collapse' : 'View full'}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={copy}
+            disabled={!text}
+            className="inline-flex items-center gap-1 rounded-md border border-border bg-white px-2 py-1 text-[11px] font-medium text-foreground hover:bg-muted disabled:opacity-40"
+          >
+            {copied ? <Check className="size-3 text-green-600" /> : <Copy className="size-3" />}
+            {copied ? 'Copied' : streaming ? 'Copy so far' : 'Copy all'}
+          </button>
+        </div>
+      </div>
+      {expanded ? (
+        <div ref={scrollerRef} className="max-h-[min(60vh,520px)] overflow-y-auto scroll-slim p-3">
+          <pre className="select-text whitespace-pre-wrap break-words font-sans text-[12px] leading-relaxed text-foreground">
+            {text}
+            {streaming ? <span className="ml-0.5 inline-block animate-pulse text-brand">▍</span> : null}
+          </pre>
+        </div>
+      ) : (
+        <p className="line-clamp-4 select-text px-3 py-2 text-[12px] leading-relaxed text-muted-foreground">{text}</p>
+      )}
     </div>
   )
 }

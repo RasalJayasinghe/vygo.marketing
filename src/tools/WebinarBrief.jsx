@@ -39,7 +39,10 @@ export default function WebinarBrief() {
     setLoading(true)
     setResult('')
     try {
-      setResult(await callBrief({ kind: 'webinar', topic, speaker, audience, date, notes, assets }))
+      setResult(await callBrief(
+        { kind: 'webinar', topic, speaker, audience, date, notes, assets },
+        { onChunk: setResult },
+      ))
     } catch (err) {
       setError(err.message)
     } finally {
@@ -95,7 +98,7 @@ export default function WebinarBrief() {
         {loading ? 'Generating…' : 'Generate brief'}
       </Button>
       {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
-      <ResultBlock text={result} />
+      <ResultBlock text={result} streaming={loading} />
     </form>
   )
 }
